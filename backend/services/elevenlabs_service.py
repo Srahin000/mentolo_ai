@@ -21,8 +21,8 @@ class ElevenLabsService:
         # Voice mappings for different personas
         # Using voice IDs instead of names for better compatibility
         self.voice_profiles = {
-            'default': 'rnnUCKXlolNpwqQwp2gT',  # Harry Potter voice
-            'harry_potter': 'rnnUCKXlolNpwqQwp2gT',  # Harry Potter voice
+            'default': 'p3JVGy12zi4oFZ7ogrTE',  # Custom voice
+            'harry_potter': 'p3JVGy12zi4oFZ7ogrTE',  # Custom voice
             'friendly': 'TxGEqnHWrfWFTfGW9XjX',  # Josh - Friendly male voice
             'professional': 'EXAVITQu4vr4xnSDxMaL',  # Bella - Professional female voice
             'energetic': 'ErXwobaYiN019PkySvjV',  # Antoni - Energetic male voice

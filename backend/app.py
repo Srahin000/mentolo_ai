@@ -8,8 +8,9 @@ import os
 import json
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import List, Dict
 
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
@@ -23,6 +24,8 @@ from services.firebase_service import FirebaseService
 # Whisper replaced with ElevenLabs STT
 from services.emotion_service import EmotionService
 from services.snowflake_service import SnowflakeService
+from services.child_development_service import ChildDevelopmentService
+from firebase_admin import firestore
 
 # Load environment variables
 load_dotenv()
@@ -44,13 +47,16 @@ app.config['UPLOAD_FOLDER'] = 'storage/audio'
 app.config['SESSION_FOLDER'] = 'storage/sessions'
 
 # Initialize services
-gemini_service = GeminiService()
+# Use Flash for quick responses (frontend)
+gemini_service = GeminiService(use_pro_model=False)
+# Pro model is used internally by ChildDevelopmentService for analysis
 claude_service = ClaudeService()
 elevenlabs_service = ElevenLabsService()
 firebase_service = FirebaseService()
 # Whisper service removed - using ElevenLabs STT instead
 emotion_service = EmotionService()
 snowflake_service = SnowflakeService()
+child_dev_service = ChildDevelopmentService()  # Uses Pro model internally
 
 # Ensure storage directories exist
 Path(app.config['UPLOAD_FOLDER']).mkdir(parents=True, exist_ok=True)
@@ -65,7 +71,7 @@ def health_check():
         'status': 'healthy',
         'service': 'HoloMentor Mobile AR',
         'version': '1.0.0',
-        'timestamp': datetime.utcnow().isoformat(),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
         'services': {
             'gemini': gemini_service.is_available(),
             'claude': claude_service.is_available(),
@@ -430,6 +436,346 @@ def analytics_conversations():
     except Exception as e:
         logger.error(f"Error in /api/analytics/conversations: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/analyze-session', methods=['POST'])
+def analyze_session():
+    """
+    Analyze a voice conversation session for child development insights
+    
+    Request (multipart/form-data):
+    - audio_file: Audio file (MP3, WAV, etc.)
+    - child_age: Integer (required)
+    - child_name: String (required)
+    - session_context: JSON string (optional)
+      {
+        "duration_minutes": 3,
+        "known_interests": ["trucks", "dinosaurs"]
+      }
+    
+    Response:
+    {
+        "session_id": "abc123",
+        "transcript": "...",
+        "analysis": { ... },
+        "timestamp": "2025-11-08T..."
+    }
+    """
+    try:
+        # Get form data
+        child_age = request.form.get('child_age')
+        child_name = request.form.get('child_name', 'Child')
+        session_context_str = request.form.get('session_context', '{}')
+        
+        if not child_age:
+            return jsonify({'error': 'child_age is required'}), 400
+        
+        try:
+            child_age = int(child_age)
+        except ValueError:
+            return jsonify({'error': 'child_age must be an integer'}), 400
+        
+        # Parse session context
+        try:
+            session_context = json.loads(session_context_str) if session_context_str else {}
+        except json.JSONDecodeError:
+            session_context = {}
+        
+        # Get audio file
+        if 'audio_file' not in request.files:
+            return jsonify({'error': 'audio_file is required'}), 400
+        
+        audio_file = request.files['audio_file']
+        if audio_file.filename == '':
+            return jsonify({'error': 'No audio file provided'}), 400
+        
+        # Save audio temporarily
+        session_id = str(uuid.uuid4())
+        audio_filename = f"session_{session_id}.mp3"
+        audio_path = Path(app.config['UPLOAD_FOLDER']) / audio_filename
+        audio_file.save(audio_path)
+        
+        # Transcribe with ElevenLabs STT
+        logger.info(f"Transcribing session {session_id} for {child_name} (age {child_age})")
+        try:
+            transcription = elevenlabs_service.speech_to_text(str(audio_path))
+            transcript = transcription['text']
+            
+            if not transcript or len(transcript.strip()) < 10:
+                return jsonify({
+                    'error': 'Transcription too short or empty',
+                    'message': 'Please ensure audio contains clear speech'
+                }), 400
+        except Exception as e:
+            logger.error(f"Transcription error: {e}")
+            return jsonify({'error': f'Transcription failed: {str(e)}'}), 500
+        
+        # Analyze with Gemini
+        logger.info(f"Analyzing session {session_id} with Gemini")
+        try:
+            analysis = child_dev_service.analyze_session(
+                transcript=transcript,
+                child_age=child_age,
+                child_name=child_name,
+                session_context=session_context
+            )
+        except Exception as e:
+            logger.error(f"Analysis error: {e}")
+            return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
+        
+        # Store in Firebase
+        user_id = request.headers.get('X-User-ID', request.form.get('user_id', 'anonymous'))
+        
+        session_data = {
+            'session_id': session_id,
+            'user_id': user_id,
+            'child_name': child_name,
+            'child_age': child_age,
+            'transcript': transcript,
+            'analysis': analysis,
+            'audio_path': str(audio_path),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'session_context': session_context
+        }
+        
+        if firebase_service.is_available():
+            try:
+                firebase_service.db.collection('child_sessions').document(session_id).set(session_data)
+                
+                # Update child profile
+                profile_ref = firebase_service.db.collection('child_profiles').document(user_id)
+                profile_ref.set({
+                    'child_name': child_name,
+                    'child_age': child_age,
+                    'last_session': datetime.now(datetime.UTC).isoformat(),
+                    'total_sessions': firestore.Increment(1) if hasattr(firestore, 'Increment') else 1
+                }, merge=True)
+                
+                logger.info(f"Saved session {session_id} to Firebase")
+            except Exception as e:
+                logger.warning(f"Failed to save to Firebase: {e}")
+        
+        # Store in Snowflake
+        if snowflake_service.is_available():
+            try:
+                snowflake_service.save_child_development_session(session_data)
+                logger.info(f"Saved session {session_id} to Snowflake")
+            except Exception as e:
+                logger.warning(f"Failed to save to Snowflake: {e}")
+        
+        return jsonify({
+            'session_id': session_id,
+            'transcript': transcript,
+            'analysis': analysis,
+            'timestamp': session_data['timestamp']
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in /api/analyze-session: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/child-profile/<child_id>', methods=['GET'])
+def get_child_profile(child_id):
+    """
+    Get aggregated child profile with longitudinal analysis
+    
+    Response:
+    {
+        "child_id": "...",
+        "profile": { ... },
+        "sessions": [ ... ],
+        "trends": {
+            "vocabulary_growth": [...],
+            "complexity_progression": [...],
+            "consistency": 0.85
+        }
+    }
+    """
+    try:
+        # Get from Firebase
+        sessions_list = []
+        profile = {}
+        
+        if firebase_service.is_available():
+            # Get all sessions
+            sessions_ref = firebase_service.db.collection('child_sessions')
+            sessions = sessions_ref.where('user_id', '==', child_id).order_by('timestamp').stream()
+            sessions_list = [s.to_dict() for s in sessions]
+            
+            # Get profile
+            profile_ref = firebase_service.db.collection('child_profiles').document(child_id)
+            profile_doc = profile_ref.get()
+            if profile_doc.exists:
+                profile = profile_doc.to_dict()
+        
+        # Get trends from Snowflake (if available)
+        trends = {}
+        if snowflake_service.is_available():
+            trends = snowflake_service.get_child_longitudinal_analysis(child_id)
+        else:
+            # Calculate basic trends from Firebase data
+            if sessions_list:
+                vocab_sizes = []
+                complexities = []
+                for session in sessions_list:
+                    analysis = session.get('analysis', {})
+                    vocab = analysis.get('vocabulary_analysis', {})
+                    if vocab:
+                        vocab_sizes.append(vocab.get('vocabulary_size_estimate', 0))
+                        complexities.append(vocab.get('sentence_complexity', 0))
+                
+                trends = {
+                    'vocabulary_growth': vocab_sizes,
+                    'complexity_progression': complexities,
+                    'consistency': len(sessions_list) / 30.0,  # sessions per month
+                    'timeline': []
+                }
+        
+        return jsonify({
+            'child_id': child_id,
+            'profile': profile,
+            'sessions': sessions_list,
+            'trends': trends,
+            'total_sessions': len(sessions_list)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in /api/child-profile: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/adaptive-learning/<child_id>', methods=['GET'])
+def get_adaptive_learning(child_id):
+    """
+    Get personalized activities based on child's interests and learning style
+    
+    Response:
+    {
+        "interests": ["trucks", "dinosaurs"],
+        "known_concepts": ["colors", "counting"],
+        "learning_style": "visual|kinesthetic|auditory",
+        "personalized_activities": [ ... ]
+    }
+    """
+    try:
+        # Get past sessions from Firebase
+        sessions_list = []
+        if firebase_service.is_available():
+            sessions_ref = firebase_service.db.collection('child_sessions')
+            sessions = sessions_ref.where('user_id', '==', child_id).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10).stream()
+            sessions_list = [s.to_dict() for s in sessions]
+        
+        if not sessions_list:
+            return jsonify({
+                'interests': [],
+                'known_concepts': [],
+                'learning_style': 'unknown',
+                'personalized_activities': []
+            })
+        
+        # Extract interests and concepts
+        interests = _extract_interests(sessions_list)
+        known_concepts = _extract_known_concepts(sessions_list)
+        learning_style = _detect_learning_style(sessions_list)
+        
+        # Generate personalized activities using Gemini
+        activities_prompt = f"""Based on this child's interests: {', '.join(interests) if interests else 'general play'} and known concepts: {', '.join(known_concepts) if known_concepts else 'basic concepts'}, generate 5 personalized learning activities that bridge their interests to new learning.
+
+Return JSON array of activities:
+[
+  {{
+    "title": "Activity name",
+    "description": "Brief description",
+    "materials": ["item1", "item2"],
+    "instructions": "Step-by-step",
+    "learning_goals": ["goal1", "goal2"],
+    "age_appropriate": true
+  }}
+]"""
+        
+        try:
+            response = gemini_service.get_response(
+                question=activities_prompt,
+                system_context={'role': 'Educational Activity Designer'},
+                user_profile=None
+            )
+            
+            # Parse activities
+            activities_text = response['answer']
+            if '```json' in activities_text:
+                json_start = activities_text.find('```json') + 7
+                json_end = activities_text.find('```', json_start)
+                activities_text = activities_text[json_start:json_end].strip()
+            elif '[' in activities_text and ']' in activities_text:
+                start = activities_text.find('[')
+                end = activities_text.rfind(']') + 1
+                activities_text = activities_text[start:end]
+            
+            activities = json.loads(activities_text)
+        except Exception as e:
+            logger.error(f"Error generating activities: {e}")
+            activities = []
+        
+        return jsonify({
+            'interests': interests,
+            'known_concepts': known_concepts,
+            'learning_style': learning_style,
+            'personalized_activities': activities
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in /api/adaptive-learning: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+def _extract_interests(sessions: List[Dict]) -> List[str]:
+    """Extract child's interests from session analyses"""
+    interests = set()
+    for session in sessions:
+        analysis = session.get('analysis', {})
+        activities = analysis.get('personalized_activities', [])
+        for activity in activities:
+            activity_interests = activity.get('based_on_interests', [])
+            if isinstance(activity_interests, list):
+                interests.update(activity_interests)
+    return list(interests)[:10]
+
+
+def _extract_known_concepts(sessions: List[Dict]) -> List[str]:
+    """Extract mastered concepts"""
+    concepts = set()
+    for session in sessions:
+        analysis = session.get('analysis', {})
+        milestones = analysis.get('milestone_progress', {})
+        if isinstance(milestones, dict):
+            concepts.update(milestones.get('on_track', []))
+            concepts.update(milestones.get('ahead', []))
+    return list(concepts)
+
+
+def _detect_learning_style(sessions: List[Dict]) -> str:
+    """Detect learning style from conversation patterns"""
+    visual_keywords = ['see', 'look', 'picture', 'color', 'watch']
+    kinesthetic_keywords = ['touch', 'feel', 'move', 'play', 'build', 'make']
+    auditory_keywords = ['hear', 'sound', 'listen', 'say', 'sing', 'music']
+    
+    visual_count = 0
+    kinesthetic_count = 0
+    auditory_count = 0
+    
+    for session in sessions:
+        transcript = session.get('transcript', '').lower()
+        visual_count += sum(1 for kw in visual_keywords if kw in transcript)
+        kinesthetic_count += sum(1 for kw in kinesthetic_keywords if kw in transcript)
+        auditory_count += sum(1 for kw in auditory_keywords if kw in transcript)
+    
+    if visual_count > kinesthetic_count and visual_count > auditory_count:
+        return 'visual'
+    elif kinesthetic_count > auditory_count:
+        return 'kinesthetic'
+    else:
+        return 'auditory'
 
 
 def build_personalized_context(user_profile, additional_context):
