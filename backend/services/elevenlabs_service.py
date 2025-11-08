@@ -1,5 +1,5 @@
 """
-ElevenLabs TTS Service - Natural, Expressive Voice Synthesis
+ElevenLabs Service - Text-to-Speech and Speech-to-Text
 """
 
 import os
@@ -7,6 +7,7 @@ import logging
 import uuid
 from pathlib import Path
 from elevenlabs import generate, voices, Voice, VoiceSettings, set_api_key
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,8 @@ class ElevenLabsService:
         # Voice mappings for different personas
         # Using voice IDs instead of names for better compatibility
         self.voice_profiles = {
-            'default': '21m00Tcm4TlvDq8ikWAM',  # Rachel - Warm, clear female voice
+            'default': 'rnnUCKXlolNpwqQwp2gT',  # Harry Potter voice
+            'harry_potter': 'rnnUCKXlolNpwqQwp2gT',  # Harry Potter voice
             'friendly': 'TxGEqnHWrfWFTfGW9XjX',  # Josh - Friendly male voice
             'professional': 'EXAVITQu4vr4xnSDxMaL',  # Bella - Professional female voice
             'energetic': 'ErXwobaYiN019PkySvjV',  # Antoni - Energetic male voice
@@ -186,5 +188,52 @@ class ElevenLabsService:
             
         except Exception as e:
             logger.error(f"Voice cloning error: {e}")
+            raise
+    
+    def speech_to_text(self, audio_path: str, language: str = 'en'):
+        """
+        Convert speech to text using ElevenLabs STT API
+        Returns transcription with metadata
+        """
+        if not self.api_key:
+            raise Exception("ElevenLabs service not available")
+        
+        try:
+            logger.info(f"Transcribing audio with ElevenLabs STT: {audio_path}")
+            
+            # ElevenLabs STT API endpoint
+            url = "https://api.elevenlabs.io/v1/speech-to-text"
+            
+            # Read audio file
+            with open(audio_path, 'rb') as audio_file:
+                files = {
+                    'audio': (os.path.basename(audio_path), audio_file, 'audio/mpeg')
+                }
+                data = {
+                    'model_id': 'eleven_multilingual_v2',  # or 'eleven_english_v1' for English only
+                    'language_code': language
+                }
+                headers = {
+                    'xi-api-key': self.api_key
+                }
+                
+                response = requests.post(url, files=files, data=data, headers=headers)
+                response.raise_for_status()
+                
+                result = response.json()
+                
+                logger.info(f"Transcription complete: {result.get('text', '')[:50]}...")
+                
+                return {
+                    'text': result.get('text', ''),
+                    'language': result.get('language', language),
+                    'duration': result.get('duration', 0),
+                    'confidence': result.get('confidence', 0.9),  # ElevenLabs provides confidence
+                    'word_timestamps': result.get('word_timestamps', []),
+                    'speaker_labels': result.get('speaker_labels', [])
+                }
+                
+        except Exception as e:
+            logger.error(f"ElevenLabs STT error: {e}")
             raise
 

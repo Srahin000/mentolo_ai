@@ -1,4 +1,0 @@
-"""
-HoloMentor AR Services
-"""
-
