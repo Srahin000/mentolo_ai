@@ -7,9 +7,10 @@ python-dotenv==1.0.0
 
 # AI/ML Services
 google-generativeai>=0.3.0  # Gemini API
+groq==0.4.1  # Optional - GroqService (not currently used, but available)
 anthropic==0.8.1
-elevenlabs==0.2.27
-openai>=1.0.0
+elevenlabs==0.2.27  # TTS and STT (replaces Whisper)
+# openai>=1.0.0  # Optional - was used for Whisper, now using ElevenLabs STT
 
 # Firebase (Optional)
 firebase-admin==6.3.0
@@ -36,4 +37,8 @@ snowflake-sqlalchemy==1.6.1
 
 # Production Server
 gunicorn==21.2.0
+
+# Picovoice (for wake word testing)
+pvporcupine==3.0.0
+pyaudio==0.2.14
 

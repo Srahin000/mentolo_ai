@@ -20,7 +20,7 @@ from services.gemini_service import GeminiService
 from services.claude_service import ClaudeService
 from services.elevenlabs_service import ElevenLabsService
 from services.firebase_service import FirebaseService
-from services.whisper_service import WhisperService
+# Whisper replaced with ElevenLabs STT
 from services.emotion_service import EmotionService
 from services.snowflake_service import SnowflakeService
 from services.places_service import PlacesService
@@ -50,7 +50,7 @@ gemini_service = GeminiService()
 claude_service = ClaudeService()
 elevenlabs_service = ElevenLabsService()
 firebase_service = FirebaseService()
-whisper_service = WhisperService()
+# Whisper service removed - using ElevenLabs STT instead
 emotion_service = EmotionService()
 snowflake_service = SnowflakeService()
 places_service = PlacesService()
@@ -75,7 +75,7 @@ def health_check():
             'claude': claude_service.is_available(),
             'elevenlabs': elevenlabs_service.is_available(),
             'firebase': firebase_service.is_available(),
-            'whisper': whisper_service.is_available(),
+            'elevenlabs_stt': elevenlabs_service.is_available(),  # ElevenLabs handles both TTS and STT
             'snowflake': snowflake_service.is_available(),
             'places': places_service.is_available()
         }
@@ -594,7 +594,7 @@ if __name__ == '__main__':
     logger.info(f"🤖 Claude: {'✓' if claude_service.is_available() else '✗'}")
     logger.info(f"🔊 ElevenLabs: {'✓' if elevenlabs_service.is_available() else '✗'}")
     logger.info(f"🔥 Firebase: {'✓' if firebase_service.is_available() else '✗'}")
-    logger.info(f"🎤 Whisper: {'✓' if whisper_service.is_available() else '✗'}")
+    logger.info(f"🎤 ElevenLabs STT: {'✓' if elevenlabs_service.is_available() else '✗'}")
     logger.info(f"❄️  Snowflake: {'✓' if snowflake_service.is_available() else '✗'}")
     logger.info(f"📍 Google Places: {'✓' if places_service.is_available() else '✗'}")
     

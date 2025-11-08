@@ -18,6 +18,8 @@ import { Camera } from 'expo-camera';
 import { Audio } from 'expo-av';
 import { askQuestion } from './api';
 import { StatusBar } from 'expo-status-bar';
+import picovoiceService from './PicovoiceWakeWord';
+import { getConfig } from './config';
 
 const { width, height } = Dimensions.get('window');
 
@@ -28,6 +30,10 @@ export default function ARPlaceholder() {
   const [emotion, setEmotion] = useState('');
   const [showSpeechBubble, setShowSpeechBubble] = useState(false);
   const [sound, setSound] = useState(null);
+  const [wakeWordActive, setWakeWordActive] = useState(false);
+  const [isListeningForWakeWord, setIsListeningForWakeWord] = useState(false);
+  const [wakeWordDetected, setWakeWordDetected] = useState(false);
+  const [detectionCount, setDetectionCount] = useState(0);
   const cameraRef = useRef(null);
 
   useEffect(() => {
@@ -37,13 +43,59 @@ export default function ARPlaceholder() {
       setHasPermission(status === 'granted');
     })();
 
-    // Cleanup audio on unmount
+    // Initialize Picovoice wake word detection
+    (async () => {
+      try {
+        const config = getConfig();
+        const picovoiceAccessKey = config.PICOVOICE_ACCESS_KEY;
+        
+        if (picovoiceAccessKey) {
+          await picovoiceService.initialize(
+            picovoiceAccessKey,
+            handleWakeWordDetected
+          );
+          await picovoiceService.start();
+          setIsListeningForWakeWord(true);
+          console.log('✅ Wake word detection active - say "Harry Potter"');
+        } else {
+          console.warn('⚠️  Picovoice Access Key not found. Wake word detection disabled.');
+        }
+      } catch (error) {
+        console.error('Failed to initialize Picovoice:', error);
+        // Continue without wake word detection
+      }
+    })();
+
+    // Cleanup on unmount
     return () => {
       if (sound) {
         sound.unloadAsync();
       }
+      picovoiceService.release();
     };
   }, []);
+
+  const handleWakeWordDetected = () => {
+    const count = detectionCount + 1;
+    setDetectionCount(count);
+    setWakeWordDetected(true);
+    setWakeWordActive(true);
+    
+    // Print to console
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('🎤🎤🎤 WAKE WORD DETECTED! 🎤🎤🎤');
+    console.log('   "Harry Potter" detected!');
+    console.log(`   Detection count: ${count}`);
+    console.log('   Activating assistant...');
+    console.log('═══════════════════════════════════════════════════════');
+    
+    // Show detection for 2 seconds, then activate
+    setTimeout(() => {
+      setWakeWordDetected(false);
+      // Automatically trigger question when wake word is detected
+      handleAskQuestion();
+    }, 2000);
+  };
 
   const handleAskQuestion = async () => {
     // For now, use a test question
@@ -176,6 +228,27 @@ export default function ARPlaceholder() {
         )}
       </TouchableOpacity>
 
+      {/* Wake Word Status Indicator */}
+      {isListeningForWakeWord && !wakeWordDetected && (
+        <View style={styles.wakeWordIndicator}>
+          <Text style={styles.wakeWordText}>
+            🎤 Listening... Say "Harry Potter"
+          </Text>
+        </View>
+      )}
+
+      {/* Wake Word Detected Indicator */}
+      {wakeWordDetected && (
+        <View style={styles.wakeWordDetectedIndicator}>
+          <Text style={styles.wakeWordDetectedText}>
+            🎤🎤🎤 DETECTED! 🎤🎤🎤
+          </Text>
+          <Text style={styles.wakeWordDetectedSubtext}>
+            "Harry Potter" detected! ({detectionCount})
+          </Text>
+        </View>
+      )}
+
       {/* Loading Indicator */}
       {isLoading && (
         <View style={styles.loadingOverlay}>
@@ -304,6 +377,55 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  wakeWordIndicator: {
+    position: 'absolute',
+    top: 50,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(76, 175, 80, 0.9)',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  wakeWordText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  wakeWordDetectedIndicator: {
+    position: 'absolute',
+    top: 50,
+    alignSelf: 'center',
+    backgroundColor: '#4CAF50',
+    paddingHorizontal: 30,
+    paddingVertical: 20,
+    borderRadius: 25,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    borderWidth: 3,
+    borderColor: '#fff',
+  },
+  wakeWordDetectedText: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    letterSpacing: 2,
+  },
+  wakeWordDetectedSubtext: {
+    color: '#fff',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 5,
+    opacity: 0.9,
   },
 });
 
