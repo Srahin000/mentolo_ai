@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuration
-API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:3001')
+API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:5000')
 TEST_USER_ID = 'test_user_harry_potter'
 
 # Colors for terminal output

@@ -116,10 +116,11 @@ def main():
         print("\n❌ Backend is not running!")
         print("\n📋 To start the backend:")
         print("   1. cd backend")
-        print("   2. python app.py")
+        print("   2. pip install -r requirements.txt")
+        print("   3. python app.py")
         print("\n   Make sure you have:")
-        print("   - Created .env file with API keys")
-        print("   - Installed dependencies: pip install -r requirements.txt")
+        print("   - Created .env file in project root with API keys")
+        print("   - Installed all dependencies")
         print("=" * 60)
         return
     
