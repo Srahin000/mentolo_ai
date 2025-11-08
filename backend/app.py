@@ -483,10 +483,53 @@ def get_coaching_centers():
                 'message': 'Please provide X-User-ID header or user_id query parameter'
             }), 400
         
-        # Get user profile
-        user_profile = firebase_service.get_user(user_id)
+        # Get user profile - try both Firebase and Snowflake
+        user_profile = {}
+        
+        # Try Firebase first
+        if firebase_service.is_available():
+            user_profile = firebase_service.get_user_profile(user_id) or {}
+        
+        # If not found in Firebase, try Snowflake
+        if not user_profile and snowflake_service.is_available():
+            try:
+                cursor = snowflake_service.conn.cursor()
+                # Try to select with location_json, fallback to without it
+                try:
+                    cursor.execute("""
+                        SELECT name, age, learning_goals, preferences_json, location_json
+                        FROM user_profiles 
+                        WHERE user_id = %s
+                    """, (user_id,))
+                except:
+                    # location_json column doesn't exist, select without it
+                    cursor.execute("""
+                        SELECT name, age, learning_goals, preferences_json
+                        FROM user_profiles 
+                        WHERE user_id = %s
+                    """, (user_id,))
+                
+                result = cursor.fetchone()
+                if result:
+                    import json
+                    preferences = json.loads(result[3]) if result[3] else {}
+                    # Get location from preferences (stored there as fallback)
+                    location = preferences.get('location', {})
+                    
+                    user_profile = {
+                        'name': result[0],
+                        'age': result[1],
+                        'learning_goals': json.loads(result[2]) if result[2] else [],
+                        'preferences': preferences,
+                        'location': location
+                    }
+                cursor.close()
+            except Exception as e:
+                logger.warning(f"Could not retrieve profile from Snowflake: {e}")
+        
+        # If still no profile, return error
         if not user_profile:
-            return jsonify({'error': 'User not found'}), 404
+            return jsonify({'error': 'User not found', 'message': 'Please create a user profile first using /api/user/profile'}), 404
         
         # Get user location
         location = user_profile.get('location')

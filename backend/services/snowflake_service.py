@@ -136,9 +136,17 @@ class SnowflakeService:
                     total_interactions INTEGER DEFAULT 0,
                     learning_goals VARIANT,
                     preferences VARIANT,
-                    preferences_json VARIANT
+                    preferences_json VARIANT,
+                    location_json VARIANT
                 )
             """)
+            
+            # Add location_json column if it doesn't exist (for existing tables)
+            try:
+                cursor.execute("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS location_json VARIANT")
+            except Exception as e:
+                # Column might already exist or we don't have ALTER permissions
+                logger.debug(f"Could not add location_json column: {e}")
             
             # Learning analytics table
             cursor.execute("""
@@ -262,43 +270,103 @@ class SnowflakeService:
             
             if exists:
                 # Update existing user
-                cursor.execute("""
-                    UPDATE user_profiles
-                    SET name = %s, age = %s, updated_at = %s,
-                        learning_goals = %s, preferences_json = %s
-                    WHERE user_id = %s
-                """, (
-                    profile_data.get('name'),
-                    profile_data.get('age'),
-                    datetime.now(timezone.utc),
-                    json.dumps(profile_data.get('learning_goals', [])),
-                    json.dumps(profile_data.get('preferences', {})),
-                    user_id
-                ))
+                # Store location in preferences_json if location_json column doesn't exist
+                preferences = profile_data.get('preferences', {})
+                if profile_data.get('location'):
+                    preferences['location'] = profile_data.get('location')
+                
+                try:
+                    # Try with location_json column first
+                    # Use TO_VARIANT to convert JSON strings to VARIANT type
+                    cursor.execute("""
+                        UPDATE user_profiles
+                        SET name = %s, age = %s, updated_at = %s,
+                            learning_goals = TO_VARIANT(PARSE_JSON(%s)), 
+                            preferences_json = TO_VARIANT(PARSE_JSON(%s)), 
+                            location_json = TO_VARIANT(PARSE_JSON(%s))
+                        WHERE user_id = %s
+                    """, (
+                        profile_data.get('name'),
+                        profile_data.get('age'),
+                        datetime.now(timezone.utc),
+                        json.dumps(profile_data.get('learning_goals', [])),
+                        json.dumps(preferences),
+                        json.dumps(profile_data.get('location', {})),
+                        user_id
+                    ))
+                except Exception as e:
+                    # Fallback: store location in preferences_json
+                    logger.warning(f"Could not update location_json, storing in preferences: {e}")
+                    cursor.execute("""
+                        UPDATE user_profiles
+                        SET name = %s, age = %s, updated_at = %s,
+                            learning_goals = TO_VARIANT(PARSE_JSON(%s)), 
+                            preferences_json = TO_VARIANT(PARSE_JSON(%s))
+                        WHERE user_id = %s
+                    """, (
+                        profile_data.get('name'),
+                        profile_data.get('age'),
+                        datetime.now(timezone.utc),
+                        json.dumps(profile_data.get('learning_goals', [])),
+                        json.dumps(preferences),
+                        user_id
+                    ))
             else:
                 # Create new user
-                cursor.execute("""
-                    INSERT INTO user_profiles (
-                        user_id, name, age, created_at, updated_at,
-                        learning_goals, preferences_json
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s
-                    )
-                """, (
-                    user_id,
-                    profile_data.get('name'),
-                    profile_data.get('age'),
-                    datetime.now(timezone.utc),
-                    datetime.now(timezone.utc),
-                    json.dumps(profile_data.get('learning_goals', [])),
-                    json.dumps(profile_data.get('preferences', {}))
-                ))
+                # Store location in preferences_json if location_json column doesn't exist
+                preferences = profile_data.get('preferences', {})
+                if profile_data.get('location'):
+                    preferences['location'] = profile_data.get('location')
+                
+                try:
+                    # Try with location_json column first
+                    # Use sub-SELECT with PARSE_JSON to insert VARIANT values
+                    cursor.execute("""
+                        INSERT INTO user_profiles (
+                            user_id, name, age, created_at, updated_at,
+                            learning_goals, preferences_json, location_json
+                        )
+                        SELECT 
+                            %s, %s, %s, %s, %s, 
+                            PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s)
+                    """, (
+                        user_id,
+                        profile_data.get('name'),
+                        profile_data.get('age'),
+                        datetime.now(timezone.utc),
+                        datetime.now(timezone.utc),
+                        json.dumps(profile_data.get('learning_goals', [])),
+                        json.dumps(preferences),
+                        json.dumps(profile_data.get('location', {}))
+                    ))
+                except Exception as e:
+                    # Fallback: store location in preferences_json
+                    logger.warning(f"Could not insert with location_json, storing in preferences: {e}")
+                    cursor.execute("""
+                        INSERT INTO user_profiles (
+                            user_id, name, age, created_at, updated_at,
+                            learning_goals, preferences_json
+                        )
+                        SELECT 
+                            %s, %s, %s, %s, %s,
+                            PARSE_JSON(%s), PARSE_JSON(%s)
+                    """, (
+                        user_id,
+                        profile_data.get('name'),
+                        profile_data.get('age'),
+                        datetime.now(timezone.utc),
+                        datetime.now(timezone.utc),
+                        json.dumps(profile_data.get('learning_goals', [])),
+                        json.dumps(preferences)
+                    ))
             
             cursor.close()
+            self.conn.commit()  # Commit the transaction
             logger.info(f"Updated user profile in Snowflake: {user_id}")
             return True
         except Exception as e:
             logger.error(f"Error updating user profile in Snowflake: {e}")
+            self.conn.rollback()  # Rollback on error
             return False
     
     def get_user_insights(self, user_id: str, days: int = 30) -> Dict:
