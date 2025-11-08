@@ -12,11 +12,15 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiService:
-    def __init__(self):
+    def __init__(self, use_pro_model=False):
         self.api_key = os.getenv('GEMINI_API_KEY')
-        # Use gemini-2.5-flash-lite model name
-        self.model_name = os.getenv('VERTEX_MODEL', 'gemini-2.5-flash-lite')
+        # Use Flash for quick responses, Pro for detailed analysis
+        if use_pro_model:
+            self.model_name = os.getenv('VERTEX_MODEL_PRO', 'gemini-2.5-pro')
+        else:
+            self.model_name = os.getenv('VERTEX_MODEL', 'gemini-2.5-flash')
         self.model = None
+        self.use_pro = use_pro_model
         
         if self.api_key:
             try:
@@ -29,23 +33,44 @@ class GeminiService:
                 available_names = [m.name.split('/')[-1] for m in available_models]
                 logger.info(f"Available Gemini models: {', '.join(available_names[:5])}")
                 
-                # Try to use the specified model name
-                if self.model_name in available_names:
-                    self.model = genai.GenerativeModel(self.model_name)
-                    logger.info(f"✅ Gemini service initialized with model: {self.model_name}")
-                else:
-                    # Try flash-lite variants
-                    flash_lite_variants = [name for name in available_names if 'flash-lite' in name.lower() or 'flash' in name.lower()]
-                    if flash_lite_variants:
-                        self.model_name = flash_lite_variants[0]
+                # Select model based on use case
+                if self.use_pro:
+                    # For analysis: prioritize Pro models
+                    pro_models = [name for name in available_names if 'pro' in name.lower()]
+                    
+                    if self.model_name in available_names:
                         self.model = genai.GenerativeModel(self.model_name)
-                        logger.info(f"✅ Using available flash model: {self.model_name}")
+                        logger.info(f"✅ Gemini Pro initialized for analysis: {self.model_name}")
+                    elif pro_models:
+                        self.model_name = pro_models[0]
+                        self.model = genai.GenerativeModel(self.model_name)
+                        logger.info(f"✅ Using Gemini Pro model: {self.model_name}")
                     else:
-                        # Fallback to first available model
+                        # Fallback to flash if no pro available
+                        flash_models = [name for name in available_names if 'flash' in name.lower()]
+                        if flash_models:
+                            self.model_name = flash_models[0]
+                            self.model = genai.GenerativeModel(self.model_name)
+                            logger.warning(f"⚠️  Pro not available, using Flash: {self.model_name}")
+                        else:
+                            raise Exception("No available Gemini models found")
+                else:
+                    # For quick responses: prioritize Flash models
+                    flash_models = [name for name in available_names if 'flash' in name.lower()]
+                    
+                    if self.model_name in available_names:
+                        self.model = genai.GenerativeModel(self.model_name)
+                        logger.info(f"✅ Gemini Flash initialized for quick responses: {self.model_name}")
+                    elif flash_models:
+                        self.model_name = flash_models[0]
+                        self.model = genai.GenerativeModel(self.model_name)
+                        logger.info(f"✅ Using Gemini Flash model: {self.model_name}")
+                    else:
+                        # Fallback to any available model
                         if available_names:
                             self.model_name = available_names[0]
                             self.model = genai.GenerativeModel(self.model_name)
-                            logger.info(f"⚠️  Using fallback model: {self.model_name}")
+                            logger.warning(f"⚠️  Using fallback model: {self.model_name}")
                         else:
                             raise Exception("No available Gemini models found")
             except Exception as e:
@@ -72,14 +97,21 @@ class GeminiService:
             # Combine system prompt and question
             full_prompt = f"{system_prompt}\n\nUser question: {question}"
             
-            # Call Gemini API - simplified format
+            # Call Gemini API - optimized based on model type
+            generation_config = {
+                'temperature': 0.7,
+                'top_p': 0.9,
+            }
+            
+            # Flash: lower tokens for speed, Pro: higher tokens for detailed analysis
+            if self.use_pro or 'pro' in self.model_name.lower():
+                generation_config['max_output_tokens'] = 4096  # More tokens for detailed analysis
+            else:
+                generation_config['max_output_tokens'] = 1024  # Lower for faster Flash responses
+            
             response = self.model.generate_content(
                 full_prompt,
-                generation_config={
-                    'temperature': 0.7,
-                    'max_output_tokens': 1024,
-                    'top_p': 0.9,
-                }
+                generation_config=generation_config
             )
             answer = response.text
             

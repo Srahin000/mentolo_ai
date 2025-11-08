@@ -32,3 +32,4 @@ venv/
 *.swp
 *.swo
 
+firebase-credentials.json

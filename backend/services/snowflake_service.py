@@ -156,6 +156,51 @@ class SnowflakeService:
                 )
             """)
             
+            # Child development sessions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS child_development_sessions (
+                    session_id VARCHAR(36) PRIMARY KEY,
+                    child_id VARCHAR(36),
+                    child_name VARCHAR(255),
+                    child_age INTEGER,
+                    timestamp TIMESTAMP_NTZ,
+                    transcript TEXT,
+                    audio_path VARCHAR(500),
+                    session_context VARIANT,
+                    analysis VARIANT,
+                    development_scores VARIANT,
+                    vocabulary_analysis VARIANT,
+                    cognitive_indicators VARIANT,
+                    emotional_intelligence VARIANT,
+                    social_skills VARIANT,
+                    creativity_imagination VARIANT,
+                    speech_clarity VARIANT,
+                    created_at TIMESTAMP_NTZ
+                )
+            """)
+            
+            # Child development trends table (aggregated daily/weekly)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS child_development_trends (
+                    trend_id VARCHAR(36) PRIMARY KEY,
+                    child_id VARCHAR(36),
+                    date DATE,
+                    language_score FLOAT,
+                    cognitive_score FLOAT,
+                    emotional_score FLOAT,
+                    social_score FLOAT,
+                    creativity_score FLOAT,
+                    vocabulary_size INTEGER,
+                    sentence_complexity FLOAT,
+                    question_frequency INTEGER,
+                    curiosity_score FLOAT,
+                    strengths_detected VARIANT,
+                    growth_areas VARIANT,
+                    milestones_progress VARIANT,
+                    created_at TIMESTAMP_NTZ
+                )
+            """)
+            
             cursor.close()
             logger.info("Snowflake schema initialized")
         except Exception as e:
@@ -424,6 +469,477 @@ class SnowflakeService:
             recommendations.append("You're doing great! Consider challenging yourself with more complex topics")
         
         return recommendations
+    
+    def save_child_development_session(self, session_data: Dict) -> bool:
+        """
+        Save child development session analysis to Snowflake
+        
+        Args:
+            session_data: Dict containing session_id, child_id, transcript, analysis, etc.
+        
+        Returns:
+            bool: True if saved successfully
+        """
+        if not self.conn:
+            return False
+        
+        try:
+            cursor = self.conn.cursor()
+            
+            analysis = session_data.get('analysis', {})
+            dev_snapshot = analysis.get('development_snapshot', {})
+            
+            # Extract scores
+            language_score = dev_snapshot.get('language', {}).get('score', 0)
+            cognitive_score = dev_snapshot.get('cognitive', {}).get('score', 0)
+            emotional_score = dev_snapshot.get('emotional', {}).get('score', 0)
+            social_score = dev_snapshot.get('social', {}).get('score', 0)
+            creativity_score = dev_snapshot.get('creativity', {}).get('score', 0)
+            
+            # Convert complex objects to JSON for VARIANT
+            analysis_json = json.dumps(analysis)
+            dev_scores_json = json.dumps({
+                'language': language_score,
+                'cognitive': cognitive_score,
+                'emotional': emotional_score,
+                'social': social_score,
+                'creativity': creativity_score
+            })
+            
+            vocab_analysis = analysis.get('vocabulary_analysis', {})
+            cognitive_indicators = analysis.get('cognitive_indicators', {})
+            emotional_intel = analysis.get('emotional_intelligence', {})
+            social_skills = analysis.get('social_skills', {})
+            creativity = analysis.get('creativity_imagination', {})
+            speech = analysis.get('speech_clarity', {})
+            
+            cursor.execute("""
+                INSERT INTO child_development_sessions (
+                    session_id, child_id, child_name, child_age, timestamp,
+                    transcript, audio_path, session_context, analysis,
+                    development_scores, vocabulary_analysis, cognitive_indicators,
+                    emotional_intelligence, social_skills, creativity_imagination,
+                    speech_clarity, created_at
+                )
+                SELECT %s, %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), PARSE_JSON(%s),
+                       PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s),
+                       PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s), %s
+            """, (
+                session_data.get('session_id'),
+                session_data.get('user_id') or session_data.get('child_id'),
+                session_data.get('child_name'),
+                session_data.get('child_age'),
+                datetime.now(timezone.utc),
+                session_data.get('transcript', ''),
+                session_data.get('audio_path', ''),
+                json.dumps(session_data.get('session_context', {})),
+                analysis_json,
+                dev_scores_json,
+                json.dumps(vocab_analysis),
+                json.dumps(cognitive_indicators),
+                json.dumps(emotional_intel),
+                json.dumps(social_skills),
+                json.dumps(creativity),
+                json.dumps(speech),
+                datetime.now(timezone.utc)
+            ))
+            
+            # Also update trends table for daily aggregation
+            self._update_development_trends(
+                child_id=session_data.get('user_id') or session_data.get('child_id'),
+                analysis=analysis
+            )
+            
+            cursor.close()
+            logger.info(f"Saved child development session to Snowflake: {session_data.get('session_id')}")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving child development session to Snowflake: {e}")
+            return False
+    
+    def _update_development_trends(self, child_id: str, analysis: Dict):
+        """Update daily development trends"""
+        if not self.conn:
+            return
+        
+        try:
+            cursor = self.conn.cursor()
+            
+            dev_snapshot = analysis.get('development_snapshot', {})
+            vocab = analysis.get('vocabulary_analysis', {})
+            cognitive = analysis.get('cognitive_indicators', {})
+            
+            today = datetime.now(timezone.utc).date()
+            trend_id = f"{child_id}_{today}"
+            
+            # Check if trend exists for today
+            cursor.execute("""
+                SELECT trend_id FROM child_development_trends
+                WHERE child_id = %s AND date = %s
+            """, (child_id, today))
+            
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Update existing trend (average with new data)
+                cursor.execute("""
+                    UPDATE child_development_trends
+                    SET 
+                        language_score = (language_score + %s) / 2,
+                        cognitive_score = (cognitive_score + %s) / 2,
+                        emotional_score = (emotional_score + %s) / 2,
+                        social_score = (social_score + %s) / 2,
+                        creativity_score = (creativity_score + %s) / 2,
+                        vocabulary_size = GREATEST(vocabulary_size, %s),
+                        sentence_complexity = (sentence_complexity + %s) / 2,
+                        question_frequency = question_frequency + %s,
+                        curiosity_score = (curiosity_score + %s) / 2,
+                        strengths_detected = PARSE_JSON(%s),
+                        growth_areas = PARSE_JSON(%s),
+                        milestones_progress = PARSE_JSON(%s),
+                        created_at = %s
+                    WHERE child_id = %s AND date = %s
+                """, (
+                    dev_snapshot.get('language', {}).get('score', 0),
+                    dev_snapshot.get('cognitive', {}).get('score', 0),
+                    dev_snapshot.get('emotional', {}).get('score', 0),
+                    dev_snapshot.get('social', {}).get('score', 0),
+                    dev_snapshot.get('creativity', {}).get('score', 0),
+                    vocab.get('vocabulary_size_estimate', 0),
+                    vocab.get('sentence_complexity', 0),
+                    vocab.get('question_frequency', 0),
+                    cognitive.get('curiosity_score', 0),
+                    json.dumps([s.get('title', '') for s in analysis.get('strengths', [])]),
+                    json.dumps([g.get('area', '') for g in analysis.get('growth_opportunities', [])]),
+                    json.dumps(analysis.get('milestone_progress', {})),
+                    datetime.now(timezone.utc),
+                    child_id,
+                    today
+                ))
+            else:
+                # Create new trend
+                cursor.execute("""
+                    INSERT INTO child_development_trends (
+                        trend_id, child_id, date,
+                        language_score, cognitive_score, emotional_score,
+                        social_score, creativity_score,
+                        vocabulary_size, sentence_complexity, question_frequency,
+                        curiosity_score, strengths_detected, growth_areas,
+                        milestones_progress, created_at
+                    )
+                    SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                           PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s), %s
+                """, (
+                    trend_id, child_id, today,
+                    dev_snapshot.get('language', {}).get('score', 0),
+                    dev_snapshot.get('cognitive', {}).get('score', 0),
+                    dev_snapshot.get('emotional', {}).get('score', 0),
+                    dev_snapshot.get('social', {}).get('score', 0),
+                    dev_snapshot.get('creativity', {}).get('score', 0),
+                    vocab.get('vocabulary_size_estimate', 0),
+                    vocab.get('sentence_complexity', 0),
+                    vocab.get('question_frequency', 0),
+                    cognitive.get('curiosity_score', 0),
+                    json.dumps([s.get('title', '') for s in analysis.get('strengths', [])]),
+                    json.dumps([g.get('area', '') for g in analysis.get('growth_opportunities', [])]),
+                    json.dumps(analysis.get('milestone_progress', {})),
+                    datetime.now(timezone.utc)
+                ))
+            
+            cursor.close()
+        except Exception as e:
+            logger.error(f"Error updating development trends: {e}")
+    
+    def get_child_development_insights(self, child_id: str, days: int = 30) -> Dict:
+        """
+        Generate comprehensive child development insights from Snowflake data
+        
+        Returns:
+            Dict with trends, strengths, growth areas, and AI-generated insights
+        """
+        if not self.conn:
+            return {}
+        
+        try:
+            cursor = self.conn.cursor()
+            
+            # Get development trends over time
+            cursor.execute("""
+                SELECT 
+                    date,
+                    language_score,
+                    cognitive_score,
+                    emotional_score,
+                    social_score,
+                    creativity_score,
+                    vocabulary_size,
+                    sentence_complexity,
+                    question_frequency,
+                    curiosity_score
+                FROM child_development_trends
+                WHERE child_id = %s
+                AND date >= DATEADD(day, -%s, CURRENT_DATE())
+                ORDER BY date ASC
+            """, (child_id, days))
+            
+            trends_data = []
+            for row in cursor.fetchall():
+                trends_data.append({
+                    'date': str(row[0]),
+                    'language': float(row[1]) if row[1] else 0,
+                    'cognitive': float(row[2]) if row[2] else 0,
+                    'emotional': float(row[3]) if row[3] else 0,
+                    'social': float(row[4]) if row[4] else 0,
+                    'creativity': float(row[5]) if row[5] else 0,
+                    'vocabulary_size': int(row[6]) if row[6] else 0,
+                    'sentence_complexity': float(row[7]) if row[7] else 0,
+                    'question_frequency': int(row[8]) if row[8] else 0,
+                    'curiosity_score': float(row[9]) if row[9] else 0
+                })
+            
+            # Get recent sessions for detailed analysis
+            cursor.execute("""
+                SELECT 
+                    session_id,
+                    timestamp,
+                    development_scores,
+                    vocabulary_analysis,
+                    strengths_detected,
+                    growth_areas
+                FROM child_development_sessions
+                WHERE child_id = %s
+                AND timestamp >= DATEADD(day, -%s, CURRENT_TIMESTAMP())
+                ORDER BY timestamp DESC
+                LIMIT 10
+            """, (child_id, days))
+            
+            recent_sessions = []
+            all_strengths = []
+            all_growth_areas = []
+            
+            for row in cursor.fetchall():
+                session_data = {
+                    'session_id': row[0],
+                    'timestamp': str(row[1]),
+                    'scores': json.loads(row[2]) if row[2] else {},
+                    'vocabulary': json.loads(row[3]) if row[3] else {},
+                    'strengths': json.loads(row[4]) if row[4] else [],
+                    'growth_areas': json.loads(row[5]) if row[5] else []
+                }
+                recent_sessions.append(session_data)
+                all_strengths.extend(session_data.get('strengths', []))
+                all_growth_areas.extend(session_data.get('growth_areas', []))
+            
+            # Calculate aggregate statistics
+            if trends_data:
+                latest = trends_data[-1]
+                earliest = trends_data[0] if len(trends_data) > 1 else latest
+                
+                vocabulary_growth = latest.get('vocabulary_size', 0) - earliest.get('vocabulary_size', 0)
+                complexity_change = latest.get('sentence_complexity', 0) - earliest.get('sentence_complexity', 0)
+                avg_scores = {
+                    'language': sum(t.get('language', 0) for t in trends_data) / len(trends_data),
+                    'cognitive': sum(t.get('cognitive', 0) for t in trends_data) / len(trends_data),
+                    'emotional': sum(t.get('emotional', 0) for t in trends_data) / len(trends_data),
+                    'social': sum(t.get('social', 0) for t in trends_data) / len(trends_data),
+                    'creativity': sum(t.get('creativity', 0) for t in trends_data) / len(trends_data)
+                }
+            else:
+                vocabulary_growth = 0
+                complexity_change = 0
+                avg_scores = {}
+            
+            # Generate AI insights
+            insights = self._generate_child_development_insights(
+                trends_data, recent_sessions, vocabulary_growth, complexity_change, avg_scores
+            )
+            
+            cursor.close()
+            
+            return {
+                'child_id': child_id,
+                'trends': trends_data,
+                'recent_sessions': recent_sessions,
+                'statistics': {
+                    'total_sessions': len(recent_sessions),
+                    'vocabulary_growth': vocabulary_growth,
+                    'complexity_change': complexity_change,
+                    'average_scores': avg_scores,
+                    'most_common_strengths': self._get_most_common(all_strengths, 5),
+                    'most_common_growth_areas': self._get_most_common(all_growth_areas, 5)
+                },
+                'insights': insights,
+                'recommendations': self._generate_child_recommendations(trends_data, avg_scores)
+            }
+        except Exception as e:
+            logger.error(f"Error getting child development insights: {e}")
+            return {}
+    
+    def _generate_child_development_insights(self, trends: List[Dict], sessions: List[Dict],
+                                            vocab_growth: int, complexity_change: float,
+                                            avg_scores: Dict) -> List[str]:
+        """Generate AI-powered insights for child development"""
+        insights = []
+        
+        if not trends:
+            return ["Start tracking sessions to see personalized insights!"]
+        
+        # Vocabulary growth insight
+        if vocab_growth > 20:
+            insights.append(f"🌟 Amazing vocabulary growth! Your child has learned {vocab_growth} new words!")
+        elif vocab_growth > 10:
+            insights.append(f"📚 Great progress! Vocabulary is expanding with {vocab_growth} new words.")
+        elif vocab_growth > 0:
+            insights.append(f"💪 Steady vocabulary growth of {vocab_growth} words - keep it up!")
+        
+        # Complexity insight
+        if complexity_change > 1.0:
+            insights.append(f"🎯 Sentence complexity is improving! Your child is using more sophisticated language.")
+        elif complexity_change < -0.5:
+            insights.append(f"💡 Sentence complexity varies - this is normal as children experiment with language.")
+        
+        # Score-based insights
+        if avg_scores:
+            highest_area = max(avg_scores.items(), key=lambda x: x[1])
+            lowest_area = min(avg_scores.items(), key=lambda x: x[1])
+            
+            if highest_area[1] > 80:
+                insights.append(f"🏆 {highest_area[0].title()} skills are exceptional! Your child excels in this area.")
+            
+            if lowest_area[1] < 60 and highest_area[1] > 70:
+                insights.append(f"📈 Focus on {lowest_area[0]} development - there's great potential for growth!")
+        
+        # Trend insights
+        if len(trends) > 7:
+            recent_avg = sum(t.get('language', 0) for t in trends[-7:]) / 7
+            older_avg = sum(t.get('language', 0) for t in trends[:7]) / 7 if len(trends) > 14 else recent_avg
+            
+            if recent_avg > older_avg * 1.1:
+                insights.append("📊 Language development is accelerating! Your child is making great progress.")
+        
+        # Session frequency insight
+        if len(sessions) >= 10:
+            insights.append(f"🎉 Consistency is key! {len(sessions)} sessions tracked - excellent engagement!")
+        elif len(sessions) >= 5:
+            insights.append(f"💪 Building a great learning habit with {len(sessions)} sessions!")
+        
+        return insights if insights else ["Keep engaging with your child to see more insights!"]
+    
+    def _generate_child_recommendations(self, trends: List[Dict], avg_scores: Dict) -> List[str]:
+        """Generate personalized recommendations"""
+        recommendations = []
+        
+        if not trends or not avg_scores:
+            return ["Start tracking sessions to get personalized recommendations"]
+        
+        # Language recommendations
+        if avg_scores.get('language', 0) < 70:
+            recommendations.append("Try reading together daily - it's the best way to build vocabulary!")
+        
+        # Cognitive recommendations
+        if avg_scores.get('cognitive', 0) < 70:
+            recommendations.append("Ask 'why' and 'how' questions to encourage critical thinking")
+        
+        # Social recommendations
+        if avg_scores.get('social', 0) < 70:
+            recommendations.append("Practice turn-taking in conversations and games")
+        
+        # Creativity recommendations
+        if avg_scores.get('creativity', 0) < 70:
+            recommendations.append("Encourage pretend play and imaginative storytelling")
+        
+        # General recommendations
+        if len(trends) < 5:
+            recommendations.append("Track more sessions to see detailed progress patterns")
+        
+        return recommendations if recommendations else ["Keep up the great work!"]
+    
+    def _get_most_common(self, items: List, limit: int = 5) -> List[str]:
+        """Get most common items from list"""
+        from collections import Counter
+        if not items:
+            return []
+        counter = Counter(items)
+        return [item for item, count in counter.most_common(limit)]
+    
+    def get_child_longitudinal_analysis(self, child_id: str) -> Dict:
+        """
+        Get longitudinal analysis for child development dashboard
+        Includes vocabulary growth, complexity progression, consistency metrics
+        """
+        if not self.conn:
+            return {}
+        
+        try:
+            cursor = self.conn.cursor()
+            
+            # Get all trends
+            cursor.execute("""
+                SELECT 
+                    date,
+                    vocabulary_size,
+                    sentence_complexity,
+                    language_score,
+                    cognitive_score,
+                    emotional_score,
+                    social_score,
+                    creativity_score
+                FROM child_development_trends
+                WHERE child_id = %s
+                ORDER BY date ASC
+            """, (child_id,))
+            
+            all_trends = []
+            for row in cursor.fetchall():
+                all_trends.append({
+                    'date': str(row[0]),
+                    'vocabulary_size': int(row[1]) if row[1] else 0,
+                    'sentence_complexity': float(row[2]) if row[2] else 0,
+                    'language': float(row[3]) if row[3] else 0,
+                    'cognitive': float(row[4]) if row[4] else 0,
+                    'emotional': float(row[5]) if row[5] else 0,
+                    'social': float(row[6]) if row[6] else 0,
+                    'creativity': float(row[7]) if row[7] else 0
+                })
+            
+            # Calculate consistency (sessions per week)
+            cursor.execute("""
+                SELECT COUNT(DISTINCT DATE(timestamp)) as days_with_sessions
+                FROM child_development_sessions
+                WHERE child_id = %s
+                AND timestamp >= DATEADD(day, -30, CURRENT_TIMESTAMP())
+            """, (child_id,))
+            
+            days_with_sessions = cursor.fetchone()[0] or 0
+            consistency = days_with_sessions / 30.0  # Sessions per day over 30 days
+            
+            cursor.close()
+            
+            return {
+                'vocabulary_growth': [t['vocabulary_size'] for t in all_trends],
+                'complexity_progression': [t['sentence_complexity'] for t in all_trends],
+                'consistency': consistency,
+                'timeline': all_trends,
+                'trend_direction': self._calculate_trend_direction(all_trends)
+            }
+        except Exception as e:
+            logger.error(f"Error getting longitudinal analysis: {e}")
+            return {}
+    
+    def _calculate_trend_direction(self, trends: List[Dict]) -> str:
+        """Calculate overall trend direction"""
+        if len(trends) < 2:
+            return 'insufficient_data'
+        
+        recent_avg = sum(t.get('language', 0) for t in trends[-7:]) / min(7, len(trends))
+        older_avg = sum(t.get('language', 0) for t in trends[:7]) / min(7, len(trends))
+        
+        if recent_avg > older_avg * 1.1:
+            return 'improving'
+        elif recent_avg < older_avg * 0.9:
+            return 'declining'
+        else:
+            return 'stable'
     
     def close(self):
         """Close Snowflake connection"""
