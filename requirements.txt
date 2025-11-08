@@ -9,7 +9,7 @@ python-dotenv==1.0.0
 groq==0.4.1
 anthropic==0.8.1
 elevenlabs==0.2.27
-openai==4.20.1
+openai>=1.0.0  # Changed from 4.20.1 to >=1.0.0
 
 # Firebase
 firebase-admin==6.3.0
@@ -29,8 +29,7 @@ scipy>=1.10.0
 requests==2.31.0
 python-multipart==0.0.6
 aiofiles==23.2.1
-uuid==1.30
+# uuid==1.30  # REMOVED - uuid is a built-in Python module
 
 # Production Server
 gunicorn==21.2.0
-

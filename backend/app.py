@@ -23,6 +23,8 @@ from services.firebase_service import FirebaseService
 from services.whisper_service import WhisperService
 from services.emotion_service import EmotionService
 from services.snowflake_service import SnowflakeService
+from services.places_service import PlacesService
+from services.interest_service import InterestService
 
 # Load environment variables
 load_dotenv()
@@ -51,6 +53,8 @@ firebase_service = FirebaseService()
 whisper_service = WhisperService()
 emotion_service = EmotionService()
 snowflake_service = SnowflakeService()
+places_service = PlacesService()
+interest_service = InterestService()
 
 # Ensure storage directories exist
 Path(app.config['UPLOAD_FOLDER']).mkdir(parents=True, exist_ok=True)
@@ -72,7 +76,8 @@ def health_check():
             'elevenlabs': elevenlabs_service.is_available(),
             'firebase': firebase_service.is_available(),
             'whisper': whisper_service.is_available(),
-            'snowflake': snowflake_service.is_available()
+            'snowflake': snowflake_service.is_available(),
+            'places': places_service.is_available()
         }
     })
 
@@ -308,7 +313,8 @@ def user_profile():
                 'name': data.get('name'),
                 'age': data.get('age'),
                 'learning_goals': data.get('learning_goals', []),
-                'preferences': data.get('preferences', {})
+                'preferences': data.get('preferences', {}),
+                'location': data.get('location', {})  # Add location support
             }
             
             # Save to Firebase
@@ -432,6 +438,119 @@ def analytics_conversations():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/recommendations/coaching-centers', methods=['GET'])
+def get_coaching_centers():
+    """
+    Get coaching center recommendations based on user interests and location
+    
+    Headers:
+    - X-User-ID: User identifier (required)
+    
+    Query Parameters:
+    - radius: Search radius in meters (default: 10000 = 10km)
+    
+    Returns:
+    {
+        "success": true,
+        "user_id": "user123",
+        "detected_interests": ["karate", "swimming"],
+        "location": {"city": "San Francisco", "state": "CA"},
+        "recommendations": [
+            {
+                "name": "Karate Dojo",
+                "address": "123 Main St",
+                "rating": 4.8,
+                "phone": "+1234567890",
+                "website": "https://...",
+                "matched_interest": "karate"
+            }
+        ],
+        "total_found": 5
+    }
+    """
+    try:
+        user_id = request.headers.get('X-User-ID', request.args.get('user_id', 'anonymous'))
+        
+        if user_id == 'anonymous':
+            return jsonify({
+                'error': 'User ID required',
+                'message': 'Please provide X-User-ID header or user_id query parameter'
+            }), 400
+        
+        # Get user profile
+        user_profile = firebase_service.get_user(user_id)
+        if not user_profile:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Get user location
+        location = user_profile.get('location')
+        if not location:
+            return jsonify({
+                'error': 'Location not set',
+                'message': 'Please update your profile with location (city, state, country or lat, lng)'
+            }), 400
+        
+        # Extract interests
+        interests = interest_service.extract_interests_from_profile(user_profile)
+        
+        # Also check recent conversations
+        if firebase_service.is_available():
+            recent_conversations = firebase_service.get_recent_interactions(user_id, limit=20)
+            conversation_interests = interest_service.extract_interests_from_conversations(recent_conversations)
+            interests.extend(conversation_interests)
+        
+        # Remove duplicates
+        interests = list(set(interests))
+        
+        if not interests:
+            return jsonify({
+                'success': True,
+                'message': 'No interests detected. Update your learning goals or have more conversations!',
+                'recommendations': [],
+                'detected_interests': []
+            })
+        
+        # Check if Places service is available
+        if not places_service.is_available():
+            return jsonify({
+                'error': 'Places service not configured',
+                'message': 'Google Places API key is required for location-based recommendations'
+            }), 503
+        
+        # Get recommendations for each interest
+        all_recommendations = []
+        radius = int(request.args.get('radius', 10000))  # 10km default
+        
+        for interest in interests[:3]:  # Limit to top 3 interests
+            try:
+                places = places_service.search_by_category(interest, location, radius=radius)
+                
+                for place in places:
+                    place['matched_interest'] = interest
+                    all_recommendations.append(place)
+            except Exception as e:
+                logger.error(f"Error searching for {interest}: {e}")
+                continue
+        
+        # Sort by rating (highest first)
+        all_recommendations.sort(key=lambda x: (x.get('rating', 0) or 0), reverse=True)
+        
+        logger.info(f"Found {len(all_recommendations)} recommendations for user {user_id}")
+        
+        return jsonify({
+            'success': True,
+            'user_id': user_id,
+            'detected_interests': interests,
+            'location': location,
+            'recommendations': all_recommendations[:10],  # Top 10
+            'total_found': len(all_recommendations)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting coaching centers: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 def build_personalized_context(user_profile, additional_context):
     """Build personalized context for AI responses using user data and analytics"""
     context = {
@@ -477,6 +596,7 @@ if __name__ == '__main__':
     logger.info(f"🔥 Firebase: {'✓' if firebase_service.is_available() else '✗'}")
     logger.info(f"🎤 Whisper: {'✓' if whisper_service.is_available() else '✗'}")
     logger.info(f"❄️  Snowflake: {'✓' if snowflake_service.is_available() else '✗'}")
+    logger.info(f"📍 Google Places: {'✓' if places_service.is_available() else '✗'}")
     
     port = int(os.environ.get('PORT', 5000))
     host = os.environ.get('HOST', '0.0.0.0')  # Allow connections from mobile devices on same network

@@ -76,6 +76,10 @@ class FirebaseService:
             logger.error(f"Error getting user: {e}")
             return None
     
+    def get_user_profile(self, user_id: str) -> Optional[Dict]:
+        """Get user profile (alias for get_user for consistency)"""
+        return self.get_user(user_id)
+    
     def update_user(self, user_id: str, updates: Dict):
         """Update user profile"""
         if not self.db:
@@ -88,6 +92,36 @@ class FirebaseService:
         except Exception as e:
             logger.error(f"Error updating user: {e}")
             raise
+    
+    def update_user_profile(self, user_id: str, profile_data: Dict):
+        """Update user profile (alias for update_user for consistency)"""
+        # Check if user exists, create if not
+        user = self.get_user(user_id)
+        if not user:
+            # Create new user with profile data
+            profile_data['user_id'] = user_id
+            profile_data['created_at'] = datetime.utcnow().isoformat()
+            self.create_user(user_id, profile_data)
+            return
+        
+        # Handle nested updates properly - Firestore needs dot notation for nested fields
+        updates = {}
+        for key, value in profile_data.items():
+            if value is not None:
+                if isinstance(value, dict):
+                    # For nested dicts, update each field individually
+                    for nested_key, nested_value in value.items():
+                        if nested_value is not None:
+                            updates[f'{key}.{nested_key}'] = nested_value
+                else:
+                    updates[key] = value
+        
+        if updates:
+            self.update_user(user_id, updates)
+    
+    def get_user_interactions(self, user_id: str, limit: int = 50) -> List[Dict]:
+        """Get user interactions (alias for get_recent_interactions)"""
+        return self.get_recent_interactions(user_id, limit=limit)
     
     # ===== Interaction Logging =====
     

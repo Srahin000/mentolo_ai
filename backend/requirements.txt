@@ -32,7 +32,7 @@ aiofiles==23.2.1
 
 # Snowflake for Analytics & AI Insights
 snowflake-connector-python==3.7.0
-snowflake-sqlalchemy==1.6.0
+snowflake-sqlalchemy==1.6.1
 
 # Production Server
 gunicorn==21.2.0
