@@ -1,0 +1,39 @@
+# HoloMentor Mobile AR - Backend Dependencies
+
+# Core Framework
+flask==3.0.0
+flask-cors==4.0.0
+python-dotenv==1.0.0
+
+# AI/ML Services
+google-generativeai>=0.3.0  # Gemini API
+anthropic==0.8.1
+elevenlabs==0.2.27
+openai>=1.0.0
+
+# Firebase (Optional)
+firebase-admin==6.3.0
+
+# Audio Processing
+soundfile==0.12.1
+librosa==0.10.1
+pydub==0.25.1
+
+# Speech Recognition & Analysis
+torch>=2.0.0
+transformers>=4.30.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Utilities
+requests==2.31.0
+python-multipart==0.0.6
+aiofiles==23.2.1
+
+# Snowflake for Analytics & AI Insights
+snowflake-connector-python==3.7.0
+snowflake-sqlalchemy==1.6.0
+
+# Production Server
+gunicorn==21.2.0
+

@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment variables
+.env
+
+# Storage
+storage/audio/**/*
+storage/sessions/**/*
+!storage/audio/.gitkeep
+!storage/sessions/.gitkeep
+backend/storage/audio/**/*
+backend/storage/sessions/**/*
+!backend/storage/audio/.gitkeep
+!backend/storage/sessions/.gitkeep
+
+# System files
+.DS_Store
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
