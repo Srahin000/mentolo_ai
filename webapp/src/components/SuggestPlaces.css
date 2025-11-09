@@ -1,0 +1,78 @@
+.suggest-places {
+  background: linear-gradient(135deg, #E0F2FE 0%, #BAE6FD 100%);
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.suggest-places.expanded {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.suggest-places-header {
+  padding: 24px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background 0.2s ease;
+}
+
+.suggest-places-header:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.suggest-places-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex: 1;
+}
+
+.suggest-places-title svg {
+  color: #0284C7;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.suggest-places-title h3 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #0C4A6E;
+  margin: 0 0 4px 0;
+}
+
+.suggest-places-subtitle {
+  font-size: 14px;
+  color: #075985;
+  margin: 0;
+  font-weight: 500;
+}
+
+.suggest-places-header svg:last-child {
+  color: #0284C7;
+  flex-shrink: 0;
+  transition: transform 0.3s ease;
+}
+
+.suggest-places.expanded .suggest-places-header svg:last-child {
+  transform: rotate(180deg);
+}
+
+.suggest-places-content {
+  padding: 0 24px 24px 24px;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+

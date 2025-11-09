@@ -1,0 +1,74 @@
+.timeline-sneak-peek {
+  background: white;
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  animation: fadeIn 0.5s ease-in;
+}
+
+.timeline-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.timeline-header svg {
+  color: #6B7280;
+}
+
+.timeline-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1F2937;
+  margin: 0;
+}
+
+.timeline-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.timeline-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  color: #059669;
+  font-weight: 500;
+}
+
+.timeline-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 60px;
+  padding: 8px 0;
+}
+
+.timeline-bar {
+  flex: 1;
+  background: linear-gradient(to top, #10B981, #34D399);
+  border-radius: 4px 4px 0 0;
+  min-width: 8px;
+  animation: growUp 0.6s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes growUp {
+  from {
+    height: 0;
+  }
+}
+

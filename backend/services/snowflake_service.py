@@ -164,7 +164,7 @@ class SnowflakeService:
                 )
             """)
             
-            # Child development sessions table
+            # Child development sessions table (enriched schema)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS child_development_sessions (
                     session_id VARCHAR(36) PRIMARY KEY,
@@ -173,6 +173,7 @@ class SnowflakeService:
                     child_age INTEGER,
                     timestamp TIMESTAMP_NTZ,
                     transcript TEXT,
+                    transcript_length INTEGER,
                     audio_path VARCHAR(500),
                     session_context VARIANT,
                     analysis VARIANT,
@@ -183,9 +184,73 @@ class SnowflakeService:
                     social_skills VARIANT,
                     creativity_imagination VARIANT,
                     speech_clarity VARIANT,
+                    -- Core Development Scores (0-100)
+                    language_score INTEGER,
+                    cognitive_score INTEGER,
+                    emotional_score INTEGER,
+                    social_score INTEGER,
+                    creativity_score INTEGER,
+                    -- Language Details
+                    vocabulary_size INTEGER,
+                    sentence_complexity FLOAT,
+                    grammar_accuracy INTEGER,
+                    question_frequency INTEGER,
+                    -- Engagement Metrics
+                    session_duration INTEGER,
+                    conversation_turns INTEGER,
+                    child_initiated_topics INTEGER,
+                    -- AI Metadata
+                    daily_insight TEXT,
+                    top_strength TEXT,
+                    growth_area TEXT,
+                    suggested_activity TEXT,
+                    -- Emotional Intelligence
+                    emotion_words_used INTEGER,
+                    empathy_indicators INTEGER,
+                    -- Cognitive Patterns
+                    reasoning_language_count INTEGER,
+                    abstract_thinking_score INTEGER,
+                    curiosity_score INTEGER,
+                    -- Speech Patterns
+                    speech_clarity_score INTEGER,
+                    sounds_to_practice VARIANT,
                     created_at TIMESTAMP_NTZ
                 )
             """)
+            
+            # Add new columns if they don't exist (for existing tables)
+            new_columns = [
+                ("transcript_length", "INTEGER"),
+                ("language_score", "INTEGER"),
+                ("cognitive_score", "INTEGER"),
+                ("emotional_score", "INTEGER"),
+                ("social_score", "INTEGER"),
+                ("creativity_score", "INTEGER"),
+                ("vocabulary_size", "INTEGER"),
+                ("sentence_complexity", "FLOAT"),
+                ("grammar_accuracy", "INTEGER"),
+                ("question_frequency", "INTEGER"),
+                ("session_duration", "INTEGER"),
+                ("conversation_turns", "INTEGER"),
+                ("child_initiated_topics", "INTEGER"),
+                ("daily_insight", "TEXT"),
+                ("top_strength", "TEXT"),
+                ("growth_area", "TEXT"),
+                ("suggested_activity", "TEXT"),
+                ("emotion_words_used", "INTEGER"),
+                ("empathy_indicators", "INTEGER"),
+                ("reasoning_language_count", "INTEGER"),
+                ("abstract_thinking_score", "INTEGER"),
+                ("curiosity_score", "INTEGER"),
+                ("speech_clarity_score", "INTEGER"),
+                ("sounds_to_practice", "VARIANT")
+            ]
+            
+            for col_name, col_type in new_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE child_development_sessions ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
+                except Exception as e:
+                    logger.debug(f"Could not add column {col_name}: {e}")
             
             # Child development trends table (aggregated daily/weekly)
             cursor.execute("""
@@ -424,6 +489,9 @@ class SnowflakeService:
             
             cursor.close()
             
+            # Get recent Gemini Pro analysis from child development sessions
+            recent_analysis = self._get_recent_gemini_analysis(user_id, days)
+            
             return {
                 'total_interactions': stats[0] if stats else 0,
                 'avg_response_time': float(stats[1]) if stats and stats[1] else 0,
@@ -433,7 +501,8 @@ class SnowflakeService:
                 'topics_covered': topics[:10],  # Last 10 topics
                 'progress_timeline': progress_data,
                 'engagement_score': self._calculate_engagement(stats, progress_data),
-                'insights': self._generate_ai_insights(stats, progress_data, topics)
+                'insights': self._generate_ai_insights(stats, progress_data, topics, recent_analysis),
+                'recent_chat_analysis': recent_analysis  # Gemini Pro analysis from recent sessions
             }
         except Exception as e:
             logger.error(f"Error getting user insights: {e}")
@@ -453,38 +522,114 @@ class SnowflakeService:
         
         return (frequency_score + consistency_score) / 2
     
-    def _generate_ai_insights(self, stats, progress_data, topics) -> List[str]:
-        """Generate AI-powered insights from user data"""
+    def _get_recent_gemini_analysis(self, user_id: str, days: int = 30) -> Dict:
+        """Get recent Gemini Pro analysis from child development sessions"""
+        if not self.conn:
+            return {}
+        
+        try:
+            cursor = self.conn.cursor()
+            
+            # Get most recent sessions with Gemini Pro analysis
+            cursor.execute("""
+                SELECT 
+                    session_id,
+                    child_name,
+                    timestamp,
+                    analysis,
+                    session_context
+                FROM child_development_sessions
+                WHERE child_id = %s
+                AND timestamp >= DATEADD(day, -%s, CURRENT_TIMESTAMP())
+                ORDER BY timestamp DESC
+                LIMIT 5
+            """, (user_id, days))
+            
+            sessions = []
+            all_insights = []
+            all_activities = []
+            all_growth_opportunities = []
+            all_strengths = []
+            
+            for row in cursor.fetchall():
+                import json
+                analysis_data = json.loads(row[3]) if isinstance(row[3], str) else row[3]
+                context_data = json.loads(row[4]) if isinstance(row[4], str) else row[4]
+                
+                if analysis_data:
+                    sessions.append({
+                        'session_id': row[0],
+                        'child_name': row[1],
+                        'timestamp': row[2].isoformat() if hasattr(row[2], 'isoformat') else str(row[2]),
+                        'daily_insight': analysis_data.get('daily_insight', ''),
+                        'strengths': analysis_data.get('strengths', []),
+                        'growth_opportunities': analysis_data.get('growth_opportunities', []),
+                        'personalized_activities': analysis_data.get('personalized_activities', [])
+                    })
+                    
+                    # Aggregate insights from Gemini Pro
+                    if analysis_data.get('daily_insight'):
+                        all_insights.append(analysis_data.get('daily_insight'))
+                    if analysis_data.get('personalized_activities'):
+                        all_activities.extend(analysis_data.get('personalized_activities', []))
+                    if analysis_data.get('growth_opportunities'):
+                        all_growth_opportunities.extend(analysis_data.get('growth_opportunities', []))
+                    if analysis_data.get('strengths'):
+                        all_strengths.extend(analysis_data.get('strengths', []))
+            
+            cursor.close()
+            
+            return {
+                'recent_sessions': sessions,
+                'aggregated_insights': all_insights[:5],  # Top 5 recent insights from Gemini Pro
+                'recommended_activities': all_activities[:5],  # Top 5 activities from Gemini Pro
+                'growth_areas': all_growth_opportunities[:3],  # Top 3 growth areas
+                'strengths': all_strengths[:3],  # Top 3 strengths
+                'total_sessions_analyzed': len(sessions)
+            }
+        except Exception as e:
+            logger.error(f"Error getting Gemini Pro analysis: {e}")
+            return {}
+    
+    def _generate_ai_insights(self, stats, progress_data, topics, recent_analysis: Dict = None) -> List[str]:
+        """Generate AI-powered insights using Gemini Pro analysis from recent chats"""
         insights = []
         
-        if not stats:
-            return ["Start learning to see personalized insights!"]
+        # PRIORITY: Use Gemini Pro insights from recent sessions
+        if recent_analysis and recent_analysis.get('aggregated_insights'):
+            # Use Gemini Pro's daily insights (these are from Gemini Pro analysis)
+            insights.extend(recent_analysis.get('aggregated_insights', [])[:3])
         
-        total = stats[0]
-        avg_time = float(stats[1]) if stats[1] else 0
-        emotion = stats[4] if stats[4] else 'neutral'
+        # Fallback to rule-based insights if no Gemini Pro analysis available
+        if not insights and stats:
+            total = stats[0]
+            avg_time = float(stats[1]) if stats[1] else 0
+            emotion = stats[4] if stats[4] else 'neutral'
+            
+            if total > 50:
+                insights.append(f"🌟 Great progress! You've had {total} learning interactions.")
+            elif total > 20:
+                insights.append(f"📈 You're building a good learning habit with {total} interactions.")
+            else:
+                insights.append(f"💪 Keep going! You've started with {total} interactions.")
+            
+            if avg_time < 1.0:
+                insights.append("⚡ Fast responses show you're asking great questions!")
+            elif avg_time > 2.0:
+                insights.append("🤔 Complex questions take more time - that's great for deep learning!")
+            
+            if emotion == 'excited':
+                insights.append("😊 Your enthusiasm is showing! Keep that energy!")
+            elif emotion == 'confused':
+                insights.append("💡 It's okay to be confused - that's when real learning happens!")
         
-        # Interaction frequency insights
-        if total > 50:
-            insights.append(f"🌟 Great progress! You've had {total} learning interactions.")
-        elif total > 20:
-            insights.append(f"📈 You're building a good learning habit with {total} interactions.")
-        else:
-            insights.append(f"💪 Keep going! You've started with {total} interactions.")
+        # Add growth opportunities from Gemini Pro
+        if recent_analysis and recent_analysis.get('growth_areas'):
+            for growth in recent_analysis.get('growth_areas', [])[:2]:
+                if isinstance(growth, dict) and growth.get('next_step'):
+                    insights.append(f"🎯 {growth.get('area', 'Skill')}: {growth.get('next_step', '')}")
         
-        # Response time insights
-        if avg_time < 1.0:
-            insights.append("⚡ Fast responses show you're asking great questions!")
-        elif avg_time > 2.0:
-            insights.append("🤔 Complex questions take more time - that's great for deep learning!")
-        
-        # Emotion insights
-        if emotion == 'excited':
-            insights.append("😊 Your enthusiasm is showing! Keep that energy!")
-        elif emotion == 'confused':
-            insights.append("💡 It's okay to be confused - that's when real learning happens!")
-        
-        # Progress insights
+        # Progress insights (keep these for engagement tracking)
         if progress_data and len(progress_data) > 7:
             recent_avg = sum(p['interactions'] for p in progress_data[:7]) / 7
             older_avg = sum(p['interactions'] for p in progress_data[7:14]) / 7 if len(progress_data) > 14 else recent_avg
@@ -492,10 +637,10 @@ class SnowflakeService:
             if recent_avg > older_avg * 1.2:
                 insights.append("📊 Your learning activity is increasing - excellent momentum!")
         
-        return insights
+        return insights[:5]  # Return top 5 insights
     
     def get_dashboard_data(self, user_id: str) -> Dict:
-        """Get comprehensive dashboard data"""
+        """Get comprehensive dashboard data with Gemini Pro insights"""
         insights = self.get_user_insights(user_id)
         
         return {
@@ -512,31 +657,44 @@ class SnowflakeService:
                 'progress_timeline': insights.get('progress_timeline', [])
             },
             'topics': insights.get('topics_covered', []),
-            'ai_insights': insights.get('insights', []),
-            'recommendations': self._generate_recommendations(insights)
+            'ai_insights': insights.get('insights', []),  # Now uses Gemini Pro insights
+            'recommendations': self._generate_recommendations(insights),
+            'recent_chat_analysis': insights.get('recent_chat_analysis', {})  # Gemini Pro analysis from recent sessions
         }
     
     def _generate_recommendations(self, insights: Dict) -> List[str]:
-        """Generate personalized recommendations"""
+        """Generate personalized recommendations from Gemini Pro analysis"""
         recommendations = []
         
-        engagement = insights.get('engagement_score', 0.5)
-        total = insights.get('total_interactions', 0)
-        emotion = insights.get('most_common_emotion', 'neutral')
+        # PRIORITY: Use Gemini Pro's recommended activities first
+        recent_analysis = insights.get('recent_chat_analysis', {})
+        if recent_analysis and recent_analysis.get('recommended_activities'):
+            for activity in recent_analysis.get('recommended_activities', [])[:3]:
+                if isinstance(activity, dict):
+                    title = activity.get('title', '')
+                    duration = activity.get('duration', '10 minutes')
+                    if title:
+                        recommendations.append(f"📚 {title} ({duration})")
         
-        if engagement < 0.3:
-            recommendations.append("Try setting a daily learning goal to build consistency")
+        # Fallback to rule-based recommendations if no Gemini Pro activities
+        if not recommendations:
+            engagement = insights.get('engagement_score', 0.5)
+            total = insights.get('total_interactions', 0)
+            emotion = insights.get('most_common_emotion', 'neutral')
+            
+            if engagement < 0.3:
+                recommendations.append("Try setting a daily learning goal to build consistency")
+            
+            if total < 10:
+                recommendations.append("Explore different topics to discover what interests you most")
+            
+            if emotion == 'frustrated':
+                recommendations.append("Take breaks between sessions - learning should be enjoyable!")
+            
+            if engagement > 0.7:
+                recommendations.append("You're doing great! Consider challenging yourself with more complex topics")
         
-        if total < 10:
-            recommendations.append("Explore different topics to discover what interests you most")
-        
-        if emotion == 'frustrated':
-            recommendations.append("Take breaks between sessions - learning should be enjoyable!")
-        
-        if engagement > 0.7:
-            recommendations.append("You're doing great! Consider challenging yourself with more complex topics")
-        
-        return recommendations
+        return recommendations[:5]  # Return top 5 recommendations
     
     def save_child_development_session(self, session_data: Dict) -> bool:
         """
@@ -557,7 +715,11 @@ class SnowflakeService:
             analysis = session_data.get('analysis', {})
             dev_snapshot = analysis.get('development_snapshot', {})
             
-            # Extract scores
+            # Extract enriched fields from analysis
+            transcript = session_data.get('transcript', '')
+            transcript_length = len(transcript)
+            
+            # Core scores
             language_score = dev_snapshot.get('language', {}).get('score', 0)
             cognitive_score = dev_snapshot.get('cognitive', {}).get('score', 0)
             emotional_score = dev_snapshot.get('emotional', {}).get('score', 0)
@@ -581,26 +743,83 @@ class SnowflakeService:
             creativity = analysis.get('creativity_imagination', {})
             speech = analysis.get('speech_clarity', {})
             
+            # Language details
+            vocabulary_size = vocab_analysis.get('vocabulary_size_estimate', vocab_analysis.get('vocabulary_size', 0))
+            sentence_complexity = vocab_analysis.get('sentence_complexity', 0.0)
+            grammar_accuracy = vocab_analysis.get('grammar_accuracy', 0)
+            question_frequency = vocab_analysis.get('question_frequency', cognitive_indicators.get('curiosity_score', 0) // 10)
+            
+            # Engagement metrics
+            session_context = session_data.get('session_context', {})
+            session_duration = session_context.get('duration_minutes', 3) * 60  # Convert to seconds
+            conversation_turns = vocab_analysis.get('conversation_turns', 0)
+            child_name = session_data.get('child_name', 'Child')
+            child_initiated_topics = len([t for t in transcript.split('\n') if child_name in t or 'Child:' in t]) // 2
+            
+            # AI metadata
+            daily_insight = analysis.get('daily_insight', '')
+            strengths_list = analysis.get('strengths', [])
+            top_strength = strengths_list[0].get('title', '') if strengths_list else ''
+            growth_opps = analysis.get('growth_opportunities', [])
+            growth_area = growth_opps[0].get('area', '') if growth_opps else ''
+            activities = analysis.get('personalized_activities', [])
+            suggested_activity = activities[0].get('title', '') if activities else ''
+            
+            # Emotional intelligence
+            emotion_words_used = len(emotional_intel.get('emotion_words_used', []))
+            empathy_indicators = len(emotional_intel.get('empathy_indicators', []))
+            
+            # Cognitive patterns
+            reasoning_language_count = len(cognitive_indicators.get('reasoning_language', []))
+            abstract_thinking_score = cognitive_indicators.get('abstract_thinking_score', 0)
+            curiosity_score = cognitive_indicators.get('curiosity_score', 0)
+            
+            # Speech patterns
+            speech_clarity_score = speech.get('intelligibility', speech.get('speech_clarity_score', 0))
+            sounds_to_practice = speech.get('sounds_to_practice', [])
+            
             cursor.execute("""
                 INSERT INTO child_development_sessions (
                     session_id, child_id, child_name, child_age, timestamp,
-                    transcript, audio_path, session_context, analysis,
+                    transcript, transcript_length, audio_path, session_context, analysis,
                     development_scores, vocabulary_analysis, cognitive_indicators,
                     emotional_intelligence, social_skills, creativity_imagination,
-                    speech_clarity, created_at
+                    speech_clarity,
+                    -- Enriched fields
+                    language_score, cognitive_score, emotional_score, social_score, creativity_score,
+                    vocabulary_size, sentence_complexity, grammar_accuracy, question_frequency,
+                    session_duration, conversation_turns, child_initiated_topics,
+                    daily_insight, top_strength, growth_area, suggested_activity,
+                    emotion_words_used, empathy_indicators,
+                    reasoning_language_count, abstract_thinking_score, curiosity_score,
+                    speech_clarity_score, sounds_to_practice,
+                    created_at
                 )
-                SELECT %s, %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), PARSE_JSON(%s),
-                       PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s),
-                       PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s), %s
+                SELECT 
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, PARSE_JSON(%s), PARSE_JSON(%s),
+                    PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s),
+                    PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s),
+                    PARSE_JSON(%s),
+                    -- Enriched fields
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s,
+                    %s, %s, %s,
+                    %s, PARSE_JSON(%s),
+                    %s
             """, (
                 session_data.get('session_id'),
                 session_data.get('user_id') or session_data.get('child_id'),
                 session_data.get('child_name'),
                 session_data.get('child_age'),
                 datetime.now(timezone.utc),
-                session_data.get('transcript', ''),
+                transcript,
+                transcript_length,
                 session_data.get('audio_path', ''),
-                json.dumps(session_data.get('session_context', {})),
+                json.dumps(session_context),
                 analysis_json,
                 dev_scores_json,
                 json.dumps(vocab_analysis),
@@ -609,6 +828,30 @@ class SnowflakeService:
                 json.dumps(social_skills),
                 json.dumps(creativity),
                 json.dumps(speech),
+                # Enriched fields
+                language_score,
+                cognitive_score,
+                emotional_score,
+                social_score,
+                creativity_score,
+                vocabulary_size,
+                sentence_complexity,
+                grammar_accuracy,
+                question_frequency,
+                session_duration,
+                conversation_turns,
+                child_initiated_topics,
+                daily_insight,
+                top_strength,
+                growth_area,
+                suggested_activity,
+                emotion_words_used,
+                empathy_indicators,
+                reasoning_language_count,
+                abstract_thinking_score,
+                curiosity_score,
+                speech_clarity_score,
+                json.dumps(sounds_to_practice),
                 datetime.now(timezone.utc)
             ))
             
@@ -930,6 +1173,161 @@ class SnowflakeService:
         counter = Counter(items)
         return [item for item, count in counter.most_common(limit)]
     
+    def get_child_development_sessions(self, child_id: str, limit: int = 50) -> List[Dict]:
+        """
+        Get child development sessions with all enriched columns from Snowflake
+        
+        Args:
+            child_id: Child identifier
+            limit: Maximum number of sessions to retrieve
+            
+        Returns:
+            List of session dictionaries with all enriched columns
+        """
+        if not self.conn:
+            return []
+        
+        try:
+            cursor = self.conn.cursor()
+            
+            # Get all enriched columns from child_development_sessions
+            cursor.execute("""
+                SELECT 
+                    session_id,
+                    child_id,
+                    child_name,
+                    child_age,
+                    timestamp,
+                    transcript,
+                    transcript_length,
+                    audio_path,
+                    session_context,
+                    analysis,
+                    development_scores,
+                    vocabulary_analysis,
+                    cognitive_indicators,
+                    emotional_intelligence,
+                    social_skills,
+                    creativity_imagination,
+                    speech_clarity,
+                    -- Core Development Scores
+                    language_score,
+                    cognitive_score,
+                    emotional_score,
+                    social_score,
+                    creativity_score,
+                    -- Language Details
+                    vocabulary_size,
+                    sentence_complexity,
+                    grammar_accuracy,
+                    question_frequency,
+                    -- Engagement Metrics
+                    session_duration,
+                    conversation_turns,
+                    child_initiated_topics,
+                    -- AI Metadata
+                    daily_insight,
+                    top_strength,
+                    growth_area,
+                    suggested_activity,
+                    -- Emotional Intelligence
+                    emotion_words_used,
+                    empathy_indicators,
+                    -- Cognitive Patterns
+                    reasoning_language_count,
+                    abstract_thinking_score,
+                    curiosity_score,
+                    -- Speech Patterns
+                    speech_clarity_score,
+                    sounds_to_practice
+                FROM child_development_sessions
+                WHERE child_id = %s
+                ORDER BY timestamp DESC
+                LIMIT %s
+            """, (child_id, limit))
+            
+            sessions = []
+            for row in cursor.fetchall():
+                import json
+                
+                # Safety check: ensure we have enough columns
+                if len(row) < 40:
+                    logger.warning(f"Row has only {len(row)} columns, expected at least 40. Skipping session.")
+                    continue
+                
+                # Parse VARIANT columns
+                session_context = json.loads(row[8]) if row[8] and isinstance(row[8], str) else (row[8] if row[8] else {})
+                analysis = json.loads(row[9]) if row[9] and isinstance(row[9], str) else (row[9] if row[9] else {})
+                development_scores = json.loads(row[10]) if row[10] and isinstance(row[10], str) else (row[10] if row[10] else {})
+                vocabulary_analysis = json.loads(row[11]) if row[11] and isinstance(row[11], str) else (row[11] if row[11] else {})
+                cognitive_indicators = json.loads(row[12]) if row[12] and isinstance(row[12], str) else (row[12] if row[12] else {})
+                emotional_intelligence = json.loads(row[13]) if row[13] and isinstance(row[13], str) else (row[13] if row[13] else {})
+                social_skills = json.loads(row[14]) if row[14] and isinstance(row[14], str) else (row[14] if row[14] else {})
+                creativity_imagination = json.loads(row[15]) if row[15] and isinstance(row[15], str) else (row[15] if row[15] else {})
+                speech_clarity = json.loads(row[16]) if row[16] and isinstance(row[16], str) else (row[16] if row[16] else {})
+                # sounds_to_practice is at index 39 (last column in SELECT)
+                sounds_to_practice = json.loads(row[39]) if len(row) > 39 and row[39] and isinstance(row[39], str) else (row[39] if len(row) > 39 and row[39] else [])
+                
+                session = {
+                    'session_id': row[0],
+                    'user_id': row[1],  # child_id
+                    'child_name': row[2],
+                    'child_age': row[3],
+                    'timestamp': row[4].isoformat() if hasattr(row[4], 'isoformat') else str(row[4]),
+                    'transcript': row[5] or '',
+                    'transcript_length': row[6] or 0,
+                    'audio_path': row[7] or '',
+                    'session_context': session_context,
+                    'analysis': analysis,
+                    'development_scores': development_scores,
+                    'vocabulary_analysis': vocabulary_analysis,
+                    'cognitive_indicators': cognitive_indicators,
+                    'emotional_intelligence': emotional_intelligence,
+                    'social_skills': social_skills,
+                    'creativity_imagination': creativity_imagination,
+                    'speech_clarity': speech_clarity,
+                    # Core Development Scores
+                    'language_score': row[17] or 0,
+                    'cognitive_score': row[18] or 0,
+                    'emotional_score': row[19] or 0,
+                    'social_score': row[20] or 0,
+                    'creativity_score': row[21] or 0,
+                    # Language Details
+                    'vocabulary_size': row[22] or 0,
+                    'sentence_complexity': float(row[23]) if row[23] else 0.0,
+                    'grammar_accuracy': row[24] or 0,
+                    'question_frequency': row[25] or 0,
+                    # Engagement Metrics
+                    'session_duration': row[26] or 0,  # in seconds
+                    'conversation_turns': row[27] or 0,
+                    'child_initiated_topics': row[28] or 0,
+                    # AI Metadata
+                    'daily_insight': row[29] or '',
+                    'top_strength': row[30] or '',
+                    'growth_area': row[31] or '',
+                    'suggested_activity': row[32] or '',
+                    # Emotional Intelligence
+                    'emotion_words_used': row[33] or 0,
+                    'empathy_indicators': row[34] or 0,
+                    # Cognitive Patterns
+                    'reasoning_language_count': row[35] or 0,
+                    'abstract_thinking_score': row[36] or 0,
+                    'curiosity_score': row[37] or 0,
+                    # Speech Patterns
+                    'speech_clarity_score': row[38] or 0,
+                    'sounds_to_practice': sounds_to_practice
+                }
+                
+                sessions.append(session)
+            
+            cursor.close()
+            logger.info(f"Retrieved {len(sessions)} sessions with enriched data for child {child_id}")
+            return sessions
+            
+        except Exception as e:
+            logger.error(f"Error getting child development sessions: {e}")
+            return []
+    
     def get_child_longitudinal_analysis(self, child_id: str) -> Dict:
         """
         Get longitudinal analysis for child development dashboard
@@ -983,9 +1381,19 @@ class SnowflakeService:
             
             cursor.close()
             
+            # Format trends for frontend (with date and value)
+            vocabulary_growth = [
+                {'date': t['date'], 'value': t['vocabulary_size']}
+                for t in all_trends
+            ]
+            complexity_progression = [
+                {'date': t['date'], 'value': t['sentence_complexity']}
+                for t in all_trends
+            ]
+            
             return {
-                'vocabulary_growth': [t['vocabulary_size'] for t in all_trends],
-                'complexity_progression': [t['sentence_complexity'] for t in all_trends],
+                'vocabulary_growth': vocabulary_growth,
+                'complexity_progression': complexity_progression,
                 'consistency': consistency,
                 'timeline': all_trends,
                 'trend_direction': self._calculate_trend_direction(all_trends)

@@ -18,6 +18,7 @@ backend/storage/sessions/**/*
 # System files
 .DS_Store
 *.log
+temp_recorded_audio.wav
 
 # Python
 __pycache__/

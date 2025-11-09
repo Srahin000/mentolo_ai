@@ -1,0 +1,58 @@
+.area-to-nurture {
+  background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  animation: fadeIn 0.5s ease-in;
+}
+
+.nurture-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.nurture-icon {
+  color: #3B82F6;
+  display: flex;
+  align-items: center;
+}
+
+.nurture-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1E40AF;
+  margin: 0;
+}
+
+.nurture-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.nurture-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1E3A8A;
+}
+
+.nurture-guidance {
+  font-size: 16px;
+  line-height: 1.6;
+  color: #1E40AF;
+  margin: 0;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+

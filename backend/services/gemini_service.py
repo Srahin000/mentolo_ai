@@ -134,6 +134,76 @@ class GeminiService:
             logger.error(f"Gemini API error: {e}")
             raise
     
+    def get_response_from_audio(self, audio_path, system_context, user_profile=None):
+        """
+        Get response from Google Gemini using audio input directly
+        Skips STT step - Gemini processes audio directly
+        
+        Args:
+            audio_path: Path to audio file (MP3, WAV, AAC, etc.)
+            system_context: Context for the conversation
+            user_profile: Optional user profile for personalization
+        """
+        if not self.model:
+            raise Exception("Gemini service not available")
+        
+        try:
+            start_time = time.time()
+            
+            # Build system prompt
+            system_prompt = self._build_system_prompt(system_context, user_profile)
+            
+            # Upload audio file to Gemini
+            logger.info(f"Uploading audio file to Gemini: {audio_path}")
+            audio_file = genai.upload_file(path=audio_path)
+            
+            try:
+                # Call Gemini API with audio
+                generation_config = {
+                    'temperature': 0.7,
+                    'top_p': 0.9,
+                }
+                
+                # Flash: lower tokens for speed, Pro: higher tokens for detailed analysis
+                if self.use_pro or 'pro' in self.model_name.lower():
+                    generation_config['max_output_tokens'] = 4096
+                else:
+                    generation_config['max_output_tokens'] = 1024
+                
+                # Generate content with audio input
+                response = self.model.generate_content(
+                    [system_prompt, audio_file],
+                    generation_config=generation_config
+                )
+                
+                answer = response.text
+                
+                response_time = time.time() - start_time
+                
+                # Extract thinking points and follow-up questions
+                thinking_points, follow_ups = self._extract_metadata(answer)
+                
+                logger.info(f"Gemini audio response generated in {response_time:.2f}s")
+                
+                return {
+                    'answer': answer,
+                    'thinking_points': thinking_points,
+                    'follow_up_questions': follow_ups,
+                    'response_time': response_time,
+                    'model': self.model_name
+                }
+            finally:
+                # Clean up uploaded file
+                try:
+                    genai.delete_file(audio_file.name)
+                    logger.info("Cleaned up uploaded audio file")
+                except Exception as cleanup_error:
+                    logger.warning(f"Could not delete uploaded file: {cleanup_error}")
+            
+        except Exception as e:
+            logger.error(f"Gemini audio API error: {e}")
+            raise
+    
     def generate_greeting(self, user_profile):
         """Generate personalized greeting for AR session"""
         if not self.model:

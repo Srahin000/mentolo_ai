@@ -1,0 +1,65 @@
+.this-weeks-strength {
+  background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  animation: fadeIn 0.5s ease-in;
+}
+
+.strength-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.strength-icon {
+  color: #F59E0B;
+  display: flex;
+  align-items: center;
+}
+
+.strength-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #92400E;
+  margin: 0;
+}
+
+.strength-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.strength-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 20px;
+  font-weight: 700;
+  color: #78350F;
+}
+
+.strength-title svg {
+  color: #F59E0B;
+}
+
+.strength-evidence {
+  font-size: 16px;
+  line-height: 1.6;
+  color: #92400E;
+  margin: 0;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+

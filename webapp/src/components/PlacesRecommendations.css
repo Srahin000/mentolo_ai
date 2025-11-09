@@ -1,0 +1,278 @@
+.places-recommendations {
+  padding: 0;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 20px;
+  font-weight: 600;
+  color: #1F2937;
+  margin-bottom: 20px;
+}
+
+.section-title .icon {
+  color: #3B82F6;
+}
+
+.places-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.place-card {
+  display: flex;
+  gap: 16px;
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: all 0.3s ease;
+}
+
+.place-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  transform: translateY(-2px);
+}
+
+.place-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+  color: white;
+  border-radius: 50%;
+  font-size: 18px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.place-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.place-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.place-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1F2937;
+  margin: 0;
+}
+
+.interest-match {
+  background: #DBEAFE;
+  color: #1E40AF;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.place-explanation {
+  background: #F0F9FF;
+  border-left: 3px solid #3B82F6;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin: 4px 0;
+}
+
+.place-explanation p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #1E40AF;
+  font-style: italic;
+}
+
+.place-rating {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: #6B7280;
+}
+
+.star-icon {
+  color: #FBBF24;
+  width: 16px;
+  height: 16px;
+}
+
+.rating-value {
+  font-weight: 600;
+  color: #1F2937;
+}
+
+.rating-count {
+  color: #9CA3AF;
+}
+
+.place-address {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+  color: #6B7280;
+}
+
+.place-address svg {
+  color: #9CA3AF;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.place-contact {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.contact-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #3B82F6;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  transition: color 0.2s ease;
+}
+
+.contact-link:hover {
+  color: #2563EB;
+  text-decoration: underline;
+}
+
+.maps-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #10B981;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 16px;
+  background: #F0FDF4;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.maps-link:hover {
+  background: #D1FAE5;
+  color: #059669;
+}
+
+.interests-badge {
+  background: #FEF3C7;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.badge-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #92400E;
+  margin-right: 8px;
+}
+
+.interests-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.interest-tag {
+  background: #FDE68A;
+  color: #78350F;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.location-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: #6B7280;
+  margin-bottom: 16px;
+}
+
+.location-info svg {
+  color: #9CA3AF;
+}
+
+.loading-state,
+.error-state,
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: #6B7280;
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+  color: #3B82F6;
+  margin: 0 auto 16px;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.error-icon {
+  color: #EF4444;
+  margin: 0 auto 16px;
+}
+
+.error-hint {
+  font-size: 12px;
+  color: #9CA3AF;
+  margin-top: 8px;
+}
+
+.btn-refresh-places {
+  width: 100%;
+  padding: 12px 20px;
+  background: #3B82F6;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 20px;
+  transition: background 0.2s ease;
+}
+
+.btn-refresh-places:hover {
+  background: #2563EB;
+}
+

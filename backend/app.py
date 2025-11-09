@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 HoloMentor Mobile AR - Flask Backend
-Modular AI voice assistant API for mobile (React Native) and future Unity integration
+"Gemini teaches. Snowflake learns."
+Snowflake is the Brain Between Sessions
 """
 
 import os
@@ -27,6 +28,8 @@ from services.snowflake_service import SnowflakeService
 from services.places_service import PlacesService
 from services.interest_service import InterestService
 from services.child_development_service import ChildDevelopmentService
+from services.cortex_analysis_service import CortexAnalysisService
+from services.snowflake_memory_service import SnowflakeMemoryService
 from firebase_admin import firestore
 
 # Load environment variables
@@ -62,6 +65,26 @@ places_service = PlacesService()
 interest_service = InterestService()
 child_dev_service = ChildDevelopmentService()  # Uses Pro model internally
 
+# Initialize Cortex service if Snowflake is available
+cortex_service = None
+memory_service = None
+if snowflake_service.is_available():
+    try:
+        cortex_service = CortexAnalysisService(snowflake_service.conn)
+        if cortex_service.is_available():
+            logger.info("✅ Cortex Analysis Service initialized")
+        else:
+            logger.info("ℹ️  Cortex not available in region, will use Gemini Pro fallback")
+        
+        # Initialize Memory Engine (vector embeddings & RAG)
+        memory_service = SnowflakeMemoryService(snowflake_service.conn)
+        if memory_service.is_available():
+            logger.info("✅ Snowflake Memory Engine initialized (Vector Embeddings & RAG)")
+        else:
+            logger.info("ℹ️  Memory Engine not available, will use standard storage")
+    except Exception as e:
+        logger.warning(f"Could not initialize Cortex/Memory services: {e}")
+
 # Ensure storage directories exist
 Path(app.config['UPLOAD_FOLDER']).mkdir(parents=True, exist_ok=True)
 Path(app.config['SESSION_FOLDER']).mkdir(parents=True, exist_ok=True)
@@ -75,6 +98,7 @@ def health_check():
         'status': 'healthy',
         'service': 'HoloMentor Mobile AR',
         'version': '1.0.0',
+        'narrative': 'Gemini teaches. Snowflake learns.',
         'timestamp': datetime.now(timezone.utc).isoformat(),
         'services': {
             'gemini': gemini_service.is_available(),
@@ -83,7 +107,9 @@ def health_check():
             'firebase': firebase_service.is_available(),
             'elevenlabs_stt': elevenlabs_service.is_available(),  # ElevenLabs handles both TTS and STT
             'snowflake': snowflake_service.is_available(),
-            'places': places_service.is_available()
+            'places': places_service.is_available(),
+            'cortex': cortex_service.is_available() if cortex_service else False,
+            'memory_engine': memory_service.is_available() if memory_service else False
         }
     })
 
@@ -92,8 +118,8 @@ def health_check():
 def ask_question():
     """
     Core AI voice assistant endpoint
-    Takes user_input, calls Groq Llama 3 70B, generates ElevenLabs TTS audio
-    Returns: { text, audio_url, emotion }
+    "Gemini teaches" - Real-time conversation
+    "Snowflake learns" - Stores interaction in memory (vector embeddings)
     
     Request:
     {
@@ -106,7 +132,8 @@ def ask_question():
     {
         "text": "Photosynthesis is...",
         "audio_url": "/api/audio/tts/abc123.mp3",
-        "emotion": "curious"
+        "emotion": "curious",
+        "memory_used": true
     }
     """
     try:
@@ -123,8 +150,18 @@ def ask_question():
         if user_id != 'anonymous':
             user_profile = firebase_service.get_user(user_id)
         
-        # Build personalized context
-        system_context = build_personalized_context(user_profile, context)
+        # Retrieve relevant context from Snowflake Memory (RAG)
+        memory_context = ""
+        if memory_service and memory_service.is_available():
+            try:
+                memory_context = memory_service.get_personalized_context(user_id, user_input)
+                if memory_context:
+                    logger.info(f"✅ Retrieved relevant memories for personalization")
+            except Exception as e:
+                logger.warning(f"Could not retrieve memory context: {e}")
+        
+        # Build personalized context (includes memory)
+        system_context = build_personalized_context(user_profile, context, memory_context)
         
         # Get fast response from Gemini
         logger.info(f"Processing question from {user_id}: {user_input}")
@@ -185,6 +222,27 @@ def ask_question():
         
         logger.info(f"Generated response for {user_id} - Emotion: {detected_emotion}")
         
+        # Store interaction in Snowflake Memory (vector embeddings) - "Snowflake learns"
+        if memory_service and memory_service.is_available():
+            try:
+                memory_service.store_interaction(
+                    user_id=user_id,
+                    session_id=session_id,
+                    question=user_input,
+                    answer=response['answer'],
+                    emotion=detected_emotion,
+                    topic=context.get('topic'),
+                    lesson_tag=context.get('lesson_tag'),
+                    confidence=0.8,
+                    metadata={
+                        'response_time': response.get('response_time', 0),
+                        'model': 'gemini-flash'
+                    }
+                )
+                logger.info("✅ Stored interaction in Snowflake Memory (vector embeddings)")
+            except Exception as e:
+                logger.warning(f"Could not store interaction in memory: {e}")
+        
         # Return in the exact format requested for mobile app
         return jsonify({
             'text': response['answer'],
@@ -194,7 +252,8 @@ def ask_question():
             'response_time': response.get('response_time', 0),
             'audio_duration': audio_response.get('duration', 0),
             'interaction_id': interaction_id,
-            'session_id': session_id
+            'session_id': session_id,
+            'memory_used': bool(memory_context)  # Indicate if RAG was used
         })
         
     except Exception as e:
@@ -584,14 +643,59 @@ def get_coaching_centers():
         # Sort by rating (highest first)
         all_recommendations.sort(key=lambda x: (x.get('rating', 0) or 0), reverse=True)
         
-        logger.info(f"Found {len(all_recommendations)} recommendations for user {user_id}")
+        # Get top 5 places
+        top_5_places = all_recommendations[:5]
+        
+        # Generate explanations for why each place is recommended
+        child_name = user_profile.get('name', 'your child')
+        child_age = user_profile.get('age', 5)
+        
+        for place in top_5_places:
+            try:
+                # Generate explanation using Gemini
+                explanation_prompt = f"""Explain why this place would be great for {child_name} (age {child_age}) to visit.
+
+Place: {place.get('name')}
+Interest: {place.get('matched_interest', 'general learning')}
+Rating: {place.get('rating', 'N/A')}/5
+Address: {place.get('address', place.get('vicinity', ''))}
+
+Child's interests: {', '.join(interests[:3])}
+
+Write a brief, warm explanation (2-3 sentences) that:
+1. Connects the place to the child's interests
+2. Highlights why it's age-appropriate
+3. Makes it sound exciting and beneficial
+
+Just return the explanation text, no formatting."""
+                
+                response = gemini_service.get_response(
+                    question=explanation_prompt,
+                    system_context={'role': 'Parent Advisor'},
+                    user_profile=None
+                )
+                
+                explanation = response.get('answer', '').strip()
+                # Clean up any markdown or formatting
+                if explanation.startswith('"') and explanation.endswith('"'):
+                    explanation = explanation[1:-1]
+                if explanation.startswith("'") and explanation.endswith("'"):
+                    explanation = explanation[1:-1]
+                
+                place['explanation'] = explanation
+            except Exception as e:
+                logger.error(f"Error generating explanation for {place.get('name')}: {e}")
+                # Fallback explanation
+                place['explanation'] = f"This place aligns with {child_name}'s interest in {place.get('matched_interest', 'learning')} and offers age-appropriate activities."
+        
+        logger.info(f"Found {len(all_recommendations)} recommendations, returning top 5 with explanations for user {user_id}")
         
         return jsonify({
             'success': True,
             'user_id': user_id,
             'detected_interests': interests,
             'location': location,
-            'recommendations': all_recommendations[:10],  # Top 10
+            'recommendations': top_5_places,  # Top 5 only
             'total_found': len(all_recommendations)
         })
         
@@ -771,11 +875,21 @@ def get_child_profile(child_id):
             if profile_doc.exists:
                 profile = profile_doc.to_dict()
         
-        # Get trends from Snowflake (if available)
+        # Get sessions and trends from Snowflake (if available) - this has all enriched columns
+        snowflake_sessions = []
         trends = {}
         if snowflake_service.is_available():
+            # Get sessions from Snowflake with all enriched columns
+            snowflake_sessions = snowflake_service.get_child_development_sessions(child_id, limit=50)
             trends = snowflake_service.get_child_longitudinal_analysis(child_id)
-        else:
+            
+            # If we have Snowflake sessions, use them (they have more enriched data)
+            if snowflake_sessions:
+                sessions_list = snowflake_sessions
+                logger.info(f"Using {len(snowflake_sessions)} sessions from Snowflake with enriched columns")
+        
+        # Fallback to Firebase if no Snowflake data
+        if not snowflake_sessions:
             # Calculate basic trends from Firebase data
             if sessions_list:
                 vocab_sizes = []
@@ -891,6 +1005,365 @@ Return JSON array of activities:
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/memory/context', methods=['GET'])
+def get_memory_context():
+    """
+    Get personalized context from Snowflake Memory (RAG)
+    
+    Query Parameters:
+    - user_id: User identifier
+    - question: Current question to find similar past interactions
+    
+    Returns:
+    {
+        "context": "...",
+        "memories": [...],
+        "available": true
+    }
+    """
+    try:
+        user_id = request.args.get('user_id') or request.headers.get('X-User-ID')
+        question = request.args.get('question', '')
+        
+        if not user_id:
+            return jsonify({'error': 'user_id required'}), 400
+        
+        if not memory_service or not memory_service.is_available():
+            return jsonify({
+                'available': False,
+                'message': 'Memory Engine not available'
+            }), 503
+        
+        memories = memory_service.retrieve_context(user_id, question, limit=5)
+        context = memory_service.get_personalized_context(user_id, question)
+        
+        return jsonify({
+            'available': True,
+            'context': context,
+            'memories': memories,
+            'count': len(memories)
+        })
+    except Exception as e:
+        logger.error(f"Error in /api/memory/context: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/memory/summary', methods=['GET'])
+def get_learning_summary():
+    """
+    Get personalized learning summary using Cortex COMPLETE
+    
+    Query Parameters:
+    - user_id: User identifier
+    - days: Number of days to analyze (default 30)
+    
+    Returns:
+    {
+        "summary": "...",
+        "interactions_count": 45,
+        "knowledge_gaps": [...],
+        "available": true
+    }
+    """
+    try:
+        user_id = request.args.get('user_id') or request.headers.get('X-User-ID')
+        days = int(request.args.get('days', 30))
+        
+        if not user_id:
+            return jsonify({'error': 'user_id required'}), 400
+        
+        if not memory_service or not memory_service.is_available():
+            return jsonify({
+                'available': False,
+                'message': 'Memory Engine not available'
+            }), 503
+        
+        summary = memory_service.get_learning_summary(user_id, days)
+        
+        if summary:
+            return jsonify({
+                'available': True,
+                **summary
+            })
+        else:
+            return jsonify({
+                'available': False,
+                'message': 'Could not generate summary'
+            }), 500
+    except Exception as e:
+        logger.error(f"Error in /api/memory/summary: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/memory/cohort-insights', methods=['GET'])
+def get_cohort_insights():
+    """
+    Get cohort-level insights using Cortex COMPLETE
+    
+    Analyzes patterns across all users
+    
+    Query Parameters:
+    - topic: Optional topic filter
+    
+    Returns:
+    {
+        "cohort_data": [...],
+        "analysis": "...",
+        "available": true
+    }
+    """
+    try:
+        topic = request.args.get('topic')
+        
+        if not memory_service or not memory_service.is_available():
+            return jsonify({
+                'available': False,
+                'message': 'Memory Engine not available'
+            }), 503
+        
+        insights = memory_service.generate_cohort_insights(topic=topic)
+        
+        if insights:
+            return jsonify({
+                'available': True,
+                **insights
+            })
+        else:
+            return jsonify({
+                'available': False,
+                'message': 'Could not generate cohort insights'
+            }), 500
+    except Exception as e:
+        logger.error(f"Error in /api/memory/cohort-insights: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/memory/knowledge-gap', methods=['POST'])
+def identify_knowledge_gap():
+    """
+    Identify and track a knowledge gap
+    
+    Request:
+    {
+        "user_id": "user123",
+        "topic": "physics",
+        "concept": "Newton's 2nd Law",
+        "context": "Student struggled with F=ma"
+    }
+    """
+    try:
+        data = request.json or {}
+        user_id = data.get('user_id')
+        topic = data.get('topic')
+        concept = data.get('concept')
+        context = data.get('context')
+        
+        if not all([user_id, topic, concept]):
+            return jsonify({'error': 'user_id, topic, and concept are required'}), 400
+        
+        if not memory_service or not memory_service.is_available():
+            return jsonify({
+                'available': False,
+                'message': 'Memory Engine not available'
+            }), 503
+        
+        success = memory_service.identify_knowledge_gap(user_id, topic, concept, context)
+        
+        return jsonify({
+            'available': True,
+            'success': success,
+            'message': 'Knowledge gap identified and tracked' if success else 'Failed to identify gap'
+        })
+    except Exception as e:
+        logger.error(f"Error in /api/memory/knowledge-gap: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/cortex/analyze', methods=['POST'])
+def cortex_analyze():
+    """
+    Get Cortex AI analysis (trends, patterns, benchmarks) for child development
+    
+    Request:
+    {
+        "child_id": "demo_child_tommy",
+        "analysis_type": "trends",  # or "patterns" or "benchmarks"
+        "days": 90
+    }
+    
+    Response:
+    {
+        "available": true,
+        "analysis": {
+            "trajectory": "improving",
+            "strengths": [...],
+            "growth_areas": [...],
+            "recommendations": [...]
+        },
+        "source": "cortex",
+        "fallback": null
+    }
+    """
+    try:
+        data = request.json or {}
+        child_id = data.get('child_id')
+        analysis_type = data.get('analysis_type', 'trends')
+        days = int(data.get('days', 90))
+        
+        if not child_id:
+            return jsonify({'error': 'child_id is required'}), 400
+        
+        if not cortex_service or not cortex_service.is_available():
+            return jsonify({
+                'available': False,
+                'message': 'Cortex AI not available in this region. Using Gemini Pro fallback.',
+                'fallback': 'gemini_pro'
+            }), 503
+        
+        # Call appropriate Cortex analysis method
+        if analysis_type == 'trends':
+            result = cortex_service.analyze_longitudinal_trends(child_id, days)
+        elif analysis_type == 'patterns':
+            result = cortex_service.detect_patterns(child_id, days)
+        elif analysis_type == 'benchmarks':
+            result = cortex_service.compare_to_benchmarks(child_id)
+        else:
+            return jsonify({
+                'available': False,
+                'message': f'Unknown analysis type: {analysis_type}',
+                'fallback': 'gemini_pro'
+            }), 400
+        
+        if result:
+            analysis = result.get('analysis', {})
+            
+            # Normalize strengths and growth_areas to match frontend expectations
+            # Frontend expects objects with 'area'/'title' and 'evidence'/'why_matters'
+            if 'strengths' in analysis and isinstance(analysis['strengths'], list):
+                normalized_strengths = []
+                for strength in analysis['strengths']:
+                    if isinstance(strength, str):
+                        # Convert string to object format
+                        normalized_strengths.append({
+                            'title': strength,
+                            'area': strength,
+                            'evidence': f'This strength has been consistently observed in recent sessions.',
+                            'why_matters': 'This strength supports overall development and learning.'
+                        })
+                    elif isinstance(strength, dict):
+                        # Already an object, ensure it has required fields
+                        normalized_strengths.append({
+                            'title': strength.get('title') or strength.get('area', ''),
+                            'area': strength.get('area') or strength.get('title', ''),
+                            'evidence': strength.get('evidence', ''),
+                            'why_matters': strength.get('why_matters', '')
+                        })
+                    else:
+                        normalized_strengths.append(strength)
+                analysis['strengths'] = normalized_strengths
+            
+            if 'growth_areas' in analysis and isinstance(analysis['growth_areas'], list):
+                normalized_growth = []
+                for area in analysis['growth_areas']:
+                    if isinstance(area, str):
+                        # Convert string to object format
+                        normalized_growth.append({
+                            'area': area,
+                            'title': area,
+                            'current': f'Currently developing {area.lower()}',
+                            'next_step': f'Practice {area.lower()} through age-appropriate activities',
+                            'recommendation': f'Focus on {area.lower()} in upcoming sessions'
+                        })
+                    elif isinstance(area, dict):
+                        # Already an object, ensure it has required fields
+                        normalized_growth.append({
+                            'area': area.get('area') or area.get('title', ''),
+                            'title': area.get('title') or area.get('area', ''),
+                            'current': area.get('current', ''),
+                            'next_step': area.get('next_step', ''),
+                            'recommendation': area.get('recommendation', '')
+                        })
+                    else:
+                        normalized_growth.append(area)
+                analysis['growth_areas'] = normalized_growth
+            
+            return jsonify({
+                'available': True,
+                'analysis': analysis,
+                'source': result.get('source', 'cortex'),
+                'trend_data': result.get('trend_data', {}),
+                'fallback': None
+            })
+        else:
+            return jsonify({
+                'available': False,
+                'message': 'Cortex analysis returned no results',
+                'fallback': 'gemini_pro'
+            }), 503
+            
+    except Exception as e:
+        logger.error(f"Error in /api/cortex/analyze: {e}")
+        return jsonify({
+            'available': False,
+            'message': f'Error processing analysis: {str(e)}',
+            'fallback': 'gemini_pro'
+        }), 500
+
+
+@app.route('/api/cortex/query', methods=['POST'])
+def cortex_query():
+    """
+    Query Cortex Analyst with natural language questions about child development
+    
+    Request:
+    {
+        "child_id": "demo_child_tommy",
+        "question": "What are the main trends in language development?"
+    }
+    
+    Response:
+    {
+        "available": true,
+        "answer": "...",
+        "source": "Cortex Analyst",
+        "child_name": "Tommy"
+    }
+    """
+    try:
+        data = request.json or {}
+        child_id = data.get('child_id')
+        question = data.get('question', '')
+        
+        if not child_id:
+            return jsonify({'error': 'child_id is required'}), 400
+        
+        if not question:
+            return jsonify({'error': 'question is required'}), 400
+        
+        if not cortex_service or not cortex_service.is_available():
+            return jsonify({
+                'available': False,
+                'message': 'Cortex Analyst not available in this region. Please use standard insights.',
+                'fallback': 'gemini_pro'
+            }), 503
+        
+        # Query Cortex Analyst
+        result = cortex_service.query_cortex_analyst(child_id, question)
+        
+        if result.get('available'):
+            return jsonify(result)
+        else:
+            return jsonify(result), 503
+            
+    except Exception as e:
+        logger.error(f"Error in /api/cortex/query: {e}")
+        return jsonify({
+            'available': False,
+            'message': f'Error processing query: {str(e)}',
+            'fallback': 'gemini_pro'
+        }), 500
+
+
 def _extract_interests(sessions: List[Dict]) -> List[str]:
     """Extract child's interests from session analyses"""
     interests = set()
@@ -940,12 +1413,17 @@ def _detect_learning_style(sessions: List[Dict]) -> str:
         return 'auditory'
 
 
-def build_personalized_context(user_profile, additional_context):
-    """Build personalized context for AI responses using user data and analytics"""
+def build_personalized_context(user_profile, additional_context, memory_context=""):
+    """Build personalized context for AI responses using user data, analytics, and memory"""
     context = {
         'role': 'You are HoloMentor, an AI holographic learning companion. You are patient, encouraging, and adaptive.',
         'personality': 'friendly, supportive, and educational'
     }
+    
+    # Add memory context if available (RAG from Snowflake)
+    if memory_context:
+        context['previous_interactions'] = memory_context
+        context['instruction'] = 'Use the previous interactions to personalize your response. Reference past conversations when relevant.'
     
     if user_profile:
         context['student_name'] = user_profile.get('name')
@@ -986,6 +1464,11 @@ if __name__ == '__main__':
     logger.info(f"🎤 ElevenLabs STT: {'✓' if elevenlabs_service.is_available() else '✗'}")
     logger.info(f"❄️  Snowflake: {'✓' if snowflake_service.is_available() else '✗'}")
     logger.info(f"📍 Google Places: {'✓' if places_service.is_available() else '✗'}")
+    logger.info(f"🧠 Cortex: {'✓' if (cortex_service and cortex_service.is_available()) else '✗ (not available in region or not configured)'}")
+    logger.info(f"💾 Memory Engine: {'✓' if (memory_service and memory_service.is_available()) else '✗ (not available or not configured)'}")
+    logger.info("")
+    logger.info("🎯 Narrative: 'Gemini teaches. Snowflake learns.'")
+    logger.info("   Snowflake is the Brain Between Sessions")
     
     port = int(os.environ.get('PORT', 5000))
     host = os.environ.get('HOST', '0.0.0.0')  # Allow connections from mobile devices on same network

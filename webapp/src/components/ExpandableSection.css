@@ -1,0 +1,67 @@
+.expandable-section {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.expandable-section.expanded {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.expandable-header {
+  width: 100%;
+  padding: 16px 20px;
+  background: #F9FAFB;
+  border: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  text-align: left;
+}
+
+.expandable-header:hover {
+  background: #F3F4F6;
+}
+
+.expandable-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1F2937;
+}
+
+.expandable-title svg {
+  color: #6B7280;
+}
+
+.expandable-header svg:last-child {
+  color: #6B7280;
+  transition: transform 0.3s ease;
+}
+
+.expandable-section.expanded .expandable-header svg:last-child {
+  transform: rotate(180deg);
+}
+
+.expandable-content {
+  padding: 24px;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+

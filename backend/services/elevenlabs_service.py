@@ -5,9 +5,9 @@ ElevenLabs Service - Text-to-Speech and Speech-to-Text
 import os
 import logging
 import uuid
-from pathlib import Path
-from elevenlabs import generate, voices, Voice, VoiceSettings, set_api_key
 import requests
+from pathlib import Path
+from elevenlabs import generate, set_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -15,28 +15,17 @@ logger = logging.getLogger(__name__)
 class ElevenLabsService:
     def __init__(self):
         self.api_key = os.getenv('ELEVENLABS_API_KEY')
-        self.output_dir = Path('storage/audio/tts')
+        # Use path relative to backend directory
+        backend_dir = Path(__file__).parent.parent
+        self.output_dir = backend_dir / 'storage' / 'audio' / 'tts'
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Voice mappings for different personas
-        # Using voice IDs instead of names for better compatibility
-        self.voice_profiles = {
-            'default': 'p3JVGy12zi4oFZ7ogrTE',  # Custom voice
-            'harry_potter': 'p3JVGy12zi4oFZ7ogrTE',  # Custom voice
-            'friendly': 'TxGEqnHWrfWFTfGW9XjX',  # Josh - Friendly male voice
-            'professional': 'EXAVITQu4vr4xnSDxMaL',  # Bella - Professional female voice
-            'energetic': 'ErXwobaYiN019PkySvjV',  # Antoni - Energetic male voice
-            'calm': 'MF3mGyEYCl7XYWbV9V6O'  # Elli - Calm, soothing female voice
-        }
-        
-        # Cache available voices on first use
-        self._available_voices = None
+        # Simple voice mapping - George for Harry Potter feel
+        self.voice_id = "Wqsc9sudxHTO4mgPpIfE"  # George - British, youthful
         
         if self.api_key:
-            # Set API key for ElevenLabs SDK
             set_api_key(self.api_key)
-            os.environ['ELEVENLABS_API_KEY'] = self.api_key
-            logger.info("ElevenLabs service initialized")
+            logger.info("ElevenLabs service initialized with George voice")
         else:
             logger.warning("ElevenLabs API key not found")
             self.api_key = None
@@ -45,52 +34,27 @@ class ElevenLabsService:
         """Check if ElevenLabs service is available"""
         return self.api_key is not None
     
-    def text_to_speech(self, text, voice_id='default', settings=None):
+    def text_to_speech(self, text, voice_id=None, settings=None):
         """
-        Convert text to natural speech using ElevenLabs
-        Returns audio file path and metadata
+        Convert text to speech using George voice
+        Returns audio file path
+        
+        Args:
+            text: Text to convert to speech
+            voice_id: Optional voice ID (ignored, using fixed George voice)
+            settings: Optional voice settings (ignored)
         """
         if not self.api_key:
             raise Exception("ElevenLabs service not available")
         
         try:
-            # Map voice_id to actual voice ID or name
-            # First try to get available voices if not cached
-            if self._available_voices is None and self.api_key:
-                try:
-                    from elevenlabs import voices
-                    self._available_voices = {v.name: v.voice_id for v in voices()}
-                    logger.info(f"Found {len(self._available_voices)} available voices")
-                except:
-                    self._available_voices = {}
+            logger.info(f"Generating speech: {text[:50]}...")
             
-            # Get voice - try voice ID first, then name
-            voice_identifier = self.voice_profiles.get(voice_id, 'default')
-            
-            # If it's a name, try to find the voice ID
-            if voice_identifier in self._available_voices:
-                voice_identifier = self._available_voices[voice_identifier]
-            
-            voice_name = voice_identifier
-            
-            # Default voice settings for educational content
-            if settings is None:
-                settings = VoiceSettings(
-                    stability=0.75,  # High stability for clear pronunciation
-                    similarity_boost=0.80,  # Natural voice characteristics
-                    style=0.5,  # Balanced expressiveness
-                    use_speaker_boost=True
-                )
-            
-            logger.info(f"Generating speech with voice: {voice_name}")
-            
-            # Generate audio using ElevenLabs API
-            # Pass API key explicitly to ensure it's used
+            # Generate audio with George voice (British, Harry Potter-like)
             audio = generate(
                 text=text,
-                voice=voice_name,
-                model="eleven_multilingual_v2",
-                api_key=self.api_key
+                voice=self.voice_id,
+                model="eleven_flash_v2_5"  # Fast model
             )
             
             # Save audio file
@@ -100,19 +64,11 @@ class ElevenLabsService:
             with open(filepath, 'wb') as f:
                 f.write(audio)
             
-            # Calculate approximate duration (rough estimate)
-            # Average speaking rate: ~150 words per minute = 2.5 words per second
-            word_count = len(text.split())
-            duration = (word_count / 2.5)
-            
-            logger.info(f"Generated audio: {filename} ({duration:.1f}s)")
+            logger.info(f"Generated audio: {filename}")
             
             return {
                 'audio_url': f'/api/audio/tts/{filename}',
                 'audio_path': str(filepath),
-                'duration': duration,
-                'voice': voice_name,
-                'text': text,
                 'filename': filename
             }
             
@@ -120,80 +76,13 @@ class ElevenLabsService:
             logger.error(f"ElevenLabs TTS error: {e}")
             raise
     
-    def generate_with_emotion(self, text, emotion='neutral', voice_id='default'):
-        """
-        Generate speech with specific emotional tone
-        Adjusts voice settings based on desired emotion
-        """
-        emotion_settings = {
-            'excited': VoiceSettings(
-                stability=0.65,
-                similarity_boost=0.85,
-                style=0.8,
-                use_speaker_boost=True
-            ),
-            'calm': VoiceSettings(
-                stability=0.85,
-                similarity_boost=0.75,
-                style=0.3,
-                use_speaker_boost=True
-            ),
-            'encouraging': VoiceSettings(
-                stability=0.70,
-                similarity_boost=0.80,
-                style=0.6,
-                use_speaker_boost=True
-            ),
-            'neutral': VoiceSettings(
-                stability=0.75,
-                similarity_boost=0.80,
-                style=0.5,
-                use_speaker_boost=True
-            )
-        }
-        
-        settings = emotion_settings.get(emotion, emotion_settings['neutral'])
-        return self.text_to_speech(text, voice_id, settings)
-    
-    def get_available_voices(self):
-        """Get list of available voices"""
-        if not self.api_key:
-            return list(self.voice_profiles.keys())
-        
-        try:
-            available_voices = voices()
-            return [voice.name for voice in available_voices]
-        except Exception as e:
-            logger.error(f"Error fetching voices: {e}")
-            return list(self.voice_profiles.keys())
-    
-    def clone_voice(self, name, audio_files):
-        """
-        Clone a voice from sample audio files
-        Useful for creating custom tutor voices
-        """
-        if not self.api_key:
-            raise Exception("ElevenLabs service not available")
-        
-        try:
-            from elevenlabs import clone
-            
-            voice = clone(
-                name=name,
-                files=audio_files
-            )
-            
-            logger.info(f"Voice cloned: {name}")
-            return voice
-            
-        except Exception as e:
-            logger.error(f"Voice cloning error: {e}")
-            raise
-    
-    def speech_to_text(self, audio_path: str, language: str = 'en'):
+    def speech_to_text(self, audio_path):
         """
         Convert speech to text using ElevenLabs STT API
         Returns transcription with metadata
+        
+        Args:
+            audio_path: Path to audio file to transcribe
         """
         if not self.api_key:
             raise Exception("ElevenLabs service not available")
@@ -201,39 +90,55 @@ class ElevenLabsService:
         try:
             logger.info(f"Transcribing audio with ElevenLabs STT: {audio_path}")
             
+            # Check file extension to determine MIME type
+            audio_ext = Path(audio_path).suffix.lower()
+            mime_types = {
+                '.wav': 'audio/wav',
+                '.mp3': 'audio/mpeg',
+                '.m4a': 'audio/mp4',
+                '.ogg': 'audio/ogg',
+                '.flac': 'audio/flac'
+            }
+            mime_type = mime_types.get(audio_ext, 'audio/wav')
+            
             # ElevenLabs STT API endpoint
             url = "https://api.elevenlabs.io/v1/speech-to-text"
+            
+            headers = {
+                "xi-api-key": self.api_key
+            }
             
             # Read audio file
             with open(audio_path, 'rb') as audio_file:
                 files = {
-                    'audio': (os.path.basename(audio_path), audio_file, 'audio/mpeg')
-                }
-                data = {
-                    'model_id': 'eleven_multilingual_v2',  # or 'eleven_english_v1' for English only
-                    'language_code': language
-                }
-                headers = {
-                    'xi-api-key': self.api_key
+                    'audio': (os.path.basename(audio_path), audio_file, mime_type)
                 }
                 
-                response = requests.post(url, files=files, data=data, headers=headers)
+                response = requests.post(url, headers=headers, files=files, timeout=30)
+                
+                # Check for errors and provide detailed error message
+                if response.status_code == 422:
+                    error_detail = response.text
+                    logger.error(f"ElevenLabs STT 422 error: {error_detail}")
+                    raise Exception(f"ElevenLabs STT request format error (422). This may mean STT is not available in your plan or the request format is incorrect. Details: {error_detail}")
+                
                 response.raise_for_status()
-                
                 result = response.json()
                 
                 logger.info(f"Transcription complete: {result.get('text', '')[:50]}...")
                 
                 return {
                     'text': result.get('text', ''),
-                    'language': result.get('language', language),
-                    'duration': result.get('duration', 0),
-                    'confidence': result.get('confidence', 0.9),  # ElevenLabs provides confidence
-                    'word_timestamps': result.get('word_timestamps', []),
-                    'speaker_labels': result.get('speaker_labels', [])
+                    'confidence': result.get('confidence', 0.9),
+                    'language': result.get('language', 'en')
                 }
                 
+        except requests.exceptions.HTTPError as e:
+            error_msg = f"ElevenLabs STT HTTP error: {e}"
+            if hasattr(e.response, 'text'):
+                error_msg += f" - {e.response.text}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
         except Exception as e:
             logger.error(f"ElevenLabs STT error: {e}")
             raise
-
