@@ -70,9 +70,15 @@ AUDIO_OUTPUT_DIR = Path("storage/audio/responses")
 AUDIO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 AUDIO_DEBUG_DIR = Path("storage/audio/debug")
 AUDIO_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+CONVERSATION_LOG_DIR = Path("storage/conversations")
+CONVERSATION_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 class VoiceAssistant:
     def __init__(self):
+        # Session tracking
+        self.session_start = datetime.now()
+        self.conversation_history = []
+        
         # Initialize Porcupine for wake word detection
         if not PICOVOICE_ACCESS_KEY:
             logger.error("PICOVOICE_ACCESS_KEY not found in environment variables.")
@@ -631,9 +637,151 @@ class VoiceAssistant:
                 import traceback
                 traceback.print_exc()
     
+    def get_pro_analysis(self):
+        """Use Gemini Pro to analyze the entire session (can be slow, 10-30s)"""
+        if not self.conversation_history:
+            return None
+        
+        try:
+            logger.info("🧠 Analyzing session with Gemini Pro (this may take 10-30 seconds)...")
+            logger.info("   💡 Press Ctrl+C again to skip analysis and save conversation only")
+            
+            # Import services for direct access
+            from services.gemini_service import GeminiService
+            
+            # Create Pro instance
+            pro_service = GeminiService(use_pro_model=True)
+            
+            if not pro_service.is_available():
+                logger.warning("Gemini Pro not available for analysis")
+                return None
+            
+            # Build analysis prompt
+            conversation_text = ""
+            for i, conv in enumerate(self.conversation_history, 1):
+                conversation_text += f"\n{i}. Tommy: {conv['question']}\n   Harry: {conv['answer']}\n"
+            
+            analysis_prompt = f"""You are an educational AI analyzing a learning session with Tommy, a 10-year-old student interested in science, math, and space.
+
+Session Duration: {(datetime.now() - self.session_start).total_seconds() / 60:.1f} minutes
+Total Interactions: {len(self.conversation_history)}
+
+Conversation History:
+{conversation_text}
+
+Please provide a comprehensive analysis covering:
+
+1. **Learning Summary**: What topics did Tommy explore? What concepts did he grasp?
+
+2. **Engagement Analysis**: How engaged was Tommy? What sparked his curiosity?
+
+3. **Knowledge Gaps**: What areas might need more explanation or follow-up?
+
+4. **Recommendations**: 
+   - Suggested topics for next session
+   - Activities or experiments to try
+   - Resources (books, videos) for deeper learning
+
+5. **Teaching Insights**: What teaching approaches worked well? How can future sessions be improved?
+
+Provide actionable, encouraging insights for Tommy's learning journey."""
+
+            analysis_response = pro_service.get_response(
+                question=analysis_prompt,
+                system_context={'role': 'You are an expert educational analyst specializing in child development and personalized learning.'},
+                user_profile=None
+            )
+            
+            logger.info("✅ Pro analysis complete")
+            return analysis_response.get('answer', '')
+            
+        except Exception as e:
+            logger.error(f"Error getting Pro analysis: {e}")
+            return None
+    
+    def save_conversation_log(self):
+        """Save conversation history to a file with Pro analysis"""
+        if not self.conversation_history:
+            logger.info("No conversations to save")
+            return
+        
+        try:
+            import json
+            
+            # Get Pro analysis first
+            pro_analysis = self.get_pro_analysis()
+            
+            # Create session filename with timestamp
+            session_id = self.session_start.strftime("%Y%m%d_%H%M%S")
+            log_file = CONVERSATION_LOG_DIR / f"session_{session_id}.json"
+            
+            # Build session summary
+            session_data = {
+                'session_id': session_id,
+                'start_time': self.session_start.isoformat(),
+                'end_time': datetime.now().isoformat(),
+                'duration_seconds': (datetime.now() - self.session_start).total_seconds(),
+                'user_id': TEST_USER_ID,
+                'user_name': 'Tommy',
+                'total_interactions': len(self.conversation_history),
+                'conversations': self.conversation_history,
+                'gemini_pro_analysis': pro_analysis if pro_analysis else None
+            }
+            
+            # Save as JSON
+            with open(log_file, 'w', encoding='utf-8') as f:
+                json.dump(session_data, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"💾 Saved conversation log: {log_file}")
+            logger.info(f"   {len(self.conversation_history)} interactions logged")
+            
+            # Also save a human-readable text version
+            txt_file = CONVERSATION_LOG_DIR / f"session_{session_id}.txt"
+            with open(txt_file, 'w', encoding='utf-8') as f:
+                f.write(f"Voice Assistant Session Log\n")
+                f.write(f"{'=' * 60}\n")
+                f.write(f"Session ID: {session_id}\n")
+                f.write(f"User: Tommy (age 10)\n")
+                f.write(f"Start: {self.session_start.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Duration: {session_data['duration_seconds']:.1f} seconds\n")
+                f.write(f"Total Interactions: {len(self.conversation_history)}\n")
+                f.write(f"{'=' * 60}\n\n")
+                
+                for i, conv in enumerate(self.conversation_history, 1):
+                    f.write(f"Interaction #{i} - {conv['timestamp']}\n")
+                    f.write(f"{'-' * 60}\n")
+                    f.write(f"Tommy: {conv['question']}\n\n")
+                    f.write(f"Harry: {conv['answer']}\n\n")
+                    if conv.get('emotion'):
+                        f.write(f"[Emotion: {conv['emotion']}]\n")
+                    if conv.get('is_follow_up'):
+                        f.write(f"[Follow-up Question]\n")
+                    f.write(f"\n")
+                
+                # Add Pro analysis at the end
+                if pro_analysis:
+                    f.write(f"\n{'=' * 60}\n")
+                    f.write(f"GEMINI PRO SESSION ANALYSIS\n")
+                    f.write(f"{'=' * 60}\n\n")
+                    f.write(pro_analysis)
+                    f.write(f"\n\n{'=' * 60}\n")
+                    f.write(f"End of Analysis\n")
+                    f.write(f"{'=' * 60}\n")
+            
+            logger.info(f"💾 Saved readable log: {txt_file}")
+            if pro_analysis:
+                logger.info(f"   📊 Includes Gemini Pro session analysis")
+            
+        except Exception as e:
+            logger.error(f"Error saving conversation log: {e}")
+    
     def cleanup(self):
-        """Clean up resources"""
+        """Clean up resources and save conversation log"""
         logger.info("Cleaning up resources...")
+        
+        # Save conversation log before cleanup
+        self.save_conversation_log()
+        
         if hasattr(self, 'porcupine_stream'):
             try:
                 self.porcupine_stream.close()
@@ -681,6 +829,17 @@ class VoiceAssistant:
                             logger.info(f"💬 Response: {response_text}")
                             logger.info(f"   Emotion detected: {emotion}")
                         
+                        # Log this interaction BEFORE playing audio (in case user interrupts during playback)
+                        if response_text:
+                            self.conversation_history.append({
+                                'timestamp': datetime.now().isoformat(),
+                                'question': user_input if not user_input.endswith('.wav') else '[Audio question]',
+                                'answer': response_text,
+                                'emotion': emotion,
+                                'audio_file': str(audio_file) if audio_file else None
+                            })
+                            logger.debug(f"💾 Logged interaction (total: {len(self.conversation_history)})")
+                        
                         if audio_file and isinstance(audio_file, Path) and audio_file.exists():
                             # Play the audio
                             self.play_audio(audio_file)
@@ -696,9 +855,23 @@ class VoiceAssistant:
                             # Generate response for follow-up
                             follow_up_response = self.generate_response(follow_up_input)
                             follow_up_audio = follow_up_response.get('audio_file')
+                            follow_up_text = follow_up_response.get('text', '')
+                            follow_up_emotion = follow_up_response.get('emotion', 'unknown')
                             
-                            if follow_up_response.get('text'):
-                                logger.info(f"💬 Follow-up response: {follow_up_response.get('text')}")
+                            if follow_up_text:
+                                logger.info(f"💬 Follow-up response: {follow_up_text}")
+                            
+                            # Log follow-up interaction BEFORE playing audio
+                            if follow_up_text:
+                                self.conversation_history.append({
+                                    'timestamp': datetime.now().isoformat(),
+                                    'question': follow_up_input if not follow_up_input.endswith('.wav') else '[Audio follow-up]',
+                                    'answer': follow_up_text,
+                                    'emotion': follow_up_emotion,
+                                    'audio_file': str(follow_up_audio) if follow_up_audio else None,
+                                    'is_follow_up': True
+                                })
+                                logger.debug(f"💾 Logged follow-up (total: {len(self.conversation_history)})")
                             
                             if follow_up_audio and isinstance(follow_up_audio, Path) and follow_up_audio.exists():
                                 self.play_audio(follow_up_audio)

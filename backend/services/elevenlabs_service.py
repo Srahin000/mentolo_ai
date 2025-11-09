@@ -20,12 +20,12 @@ class ElevenLabsService:
         self.output_dir = backend_dir / 'storage' / 'audio' / 'tts'
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Simple voice mapping - George for Harry Potter feel
-        self.voice_id = "Wqsc9sudxHTO4mgPpIfE"  # George - British, youthful
+        # Simple voice mapping - Daniel for British Harry Potter feel
+        self.voice_id = "0W0wYbNB1YlMLulZ1dH9"  # Daniel - British, deep, mature
         
         if self.api_key:
             set_api_key(self.api_key)
-            logger.info("ElevenLabs service initialized with George voice")
+            logger.info("ElevenLabs service initialized with Daniel (British) voice")
         else:
             logger.warning("ElevenLabs API key not found")
             self.api_key = None
@@ -36,12 +36,12 @@ class ElevenLabsService:
     
     def text_to_speech(self, text, voice_id=None, settings=None):
         """
-        Convert text to speech using George voice
+        Convert text to speech using Daniel voice (British)
         Returns audio file path
         
         Args:
             text: Text to convert to speech
-            voice_id: Optional voice ID (ignored, using fixed George voice)
+            voice_id: Optional voice ID (ignored, using fixed Daniel voice)
             settings: Optional voice settings (ignored)
         """
         if not self.api_key:
@@ -50,7 +50,7 @@ class ElevenLabsService:
         try:
             logger.info(f"Generating speech: {text[:50]}...")
             
-            # Generate audio with George voice (British, Harry Potter-like)
+            # Generate audio with Daniel voice (British, Harry Potter-like)
             audio = generate(
                 text=text,
                 voice=self.voice_id,
