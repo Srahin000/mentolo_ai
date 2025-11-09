@@ -1,0 +1,20 @@
+# Voice Assistant Dependencies
+
+# Core audio processing
+pyaudio>=0.2.11
+SpeechRecognition>=3.10.0
+
+# Text-to-Speech options (install at least one)
+gtts>=2.3.0          # Google Text-to-Speech (requires internet)
+pyttsx3>=2.90        # Offline TTS (works without internet)
+pygame>=2.5.0        # For audio playback
+
+# API clients
+openai>=1.0.0        # For OpenAI API (optional)
+requests>=2.31.0     # For HTTP requests
+
+# Note: pyaudio may require system dependencies:
+# - macOS: brew install portaudio
+# - Ubuntu/Debian: sudo apt-get install portaudio19-dev python3-pyaudio
+# - Windows: Usually works with pip install
+

@@ -32,7 +32,6 @@ from services.interest_service import InterestService
 from services.child_development_service import ChildDevelopmentService
 from services.cortex_analysis_service import CortexAnalysisService
 from services.snowflake_memory_service import SnowflakeMemoryService
-from services.heygen_service import HeyGenService
 from firebase_admin import firestore
 
 # Load environment variables
@@ -88,13 +87,6 @@ if snowflake_service.is_available():
     except Exception as e:
         logger.warning(f"Could not initialize Cortex/Memory services: {e}")
 
-# Initialize HeyGen service
-heygen_service = HeyGenService()
-if heygen_service.is_available():
-    logger.info("✅ HeyGen Realtime Avatar Service initialized")
-else:
-    logger.info("ℹ️  HeyGen service not available (API key not configured)")
-
 # Ensure storage directories exist
 Path(app.config['UPLOAD_FOLDER']).mkdir(parents=True, exist_ok=True)
 Path(app.config['SESSION_FOLDER']).mkdir(parents=True, exist_ok=True)
@@ -131,12 +123,16 @@ def ask_question():
     "Gemini teaches" - Real-time conversation
     "Snowflake learns" - Stores interaction in memory (vector embeddings)
     
-    Request:
+    Request (JSON):
     {
         "user_input": "What is photosynthesis?",
         "user_id": "optional",
         "context": {}
     }
+    
+    OR Request (multipart/form-data with audio):
+    - audio: Audio file (WAV, MP3, etc.)
+    - user_id: User ID (optional)
     
     Response:
     {
@@ -147,43 +143,90 @@ def ask_question():
     }
     """
     try:
-        data = request.json
-        user_id = data.get('user_id', 'anonymous')
-        user_input = data.get('user_input', '') or data.get('question', '')  # Support both field names
-        context = data.get('context', {})
+        # Check if this is an audio upload or JSON request
+        is_audio_upload = 'audio' in request.files
         
-        if not user_input:
-            return jsonify({'error': 'No user_input provided'}), 400
-        
-        # Get user profile for personalization
-        user_profile = None
-        if user_id != 'anonymous':
-            user_profile = firebase_service.get_user(user_id)
-        
-        # Retrieve relevant context from Snowflake Memory (RAG)
-        memory_context = ""
-        if memory_service and memory_service.is_available():
+        if is_audio_upload:
+            # Handle audio file upload (Gemini multimodal)
+            logger.info("📤 Received audio file upload")
+            
+            user_id = request.form.get('user_id', 'anonymous')
+            audio_file = request.files['audio']
+            
+            if audio_file.filename == '':
+                return jsonify({'error': 'No audio file provided'}), 400
+            
+            # Save audio temporarily
+            temp_audio_path = Path(app.config['UPLOAD_FOLDER']) / f"temp_{uuid.uuid4()}_{audio_file.filename}"
+            audio_file.save(temp_audio_path)
+            logger.info(f"✅ Audio saved to: {temp_audio_path}")
+            
+            # Get user profile for personalization
+            user_profile = None
+            if user_id != 'anonymous':
+                user_profile = firebase_service.get_user(user_id)
+            
+            # Build personalized context
+            system_context = build_personalized_context(user_profile, {}, "")
+            
+            # Use Gemini to process audio directly (multimodal)
+            logger.info(f"🎵 Sending audio to Gemini multimodal API...")
+            response = gemini_service.get_response_from_audio(
+                audio_path=str(temp_audio_path),
+                system_context=system_context,
+                user_profile=user_profile
+            )
+            
+            # Clean up temp file
             try:
-                memory_context = memory_service.get_personalized_context(user_id, user_input)
-                if memory_context:
-                    logger.info(f"✅ Retrieved relevant memories for personalization")
-            except Exception as e:
-                logger.warning(f"Could not retrieve memory context: {e}")
-        
-        # Build personalized context (includes memory)
-        system_context = build_personalized_context(user_profile, context, memory_context)
-        
-        # Get fast response from Gemini
-        logger.info(f"Processing question from {user_id}: {user_input}")
-        response = gemini_service.get_response(
-            question=user_input,
-            system_context=system_context,
-            user_profile=user_profile
-        )
-        
-        # Detect emotion from user input (simple text-based analysis)
-        emotion_analysis = emotion_service.analyze_text(user_input)
-        detected_emotion = emotion_analysis.get('primary_emotion', 'neutral')
+                temp_audio_path.unlink()
+            except:
+                pass
+            
+            user_input = "[Audio input processed by Gemini]"  # For logging
+            detected_emotion = 'neutral'  # Audio emotion detection could be added
+            memory_context = ""
+            context = {}
+            
+        else:
+            # Handle JSON request (text input)
+            data = request.json
+            user_id = data.get('user_id', 'anonymous')
+            user_input = data.get('user_input', '') or data.get('question', '')
+            context = data.get('context', {})
+            
+            if not user_input:
+                return jsonify({'error': 'No user_input provided'}), 400
+            
+            # Get user profile for personalization
+            user_profile = None
+            if user_id != 'anonymous':
+                user_profile = firebase_service.get_user(user_id)
+            
+            # Retrieve relevant context from Snowflake Memory (RAG)
+            memory_context = ""
+            if memory_service and memory_service.is_available():
+                try:
+                    memory_context = memory_service.get_personalized_context(user_id, user_input)
+                    if memory_context:
+                        logger.info(f"✅ Retrieved relevant memories for personalization")
+                except Exception as e:
+                    logger.warning(f"Could not retrieve memory context: {e}")
+            
+            # Build personalized context (includes memory)
+            system_context = build_personalized_context(user_profile, context, memory_context)
+            
+            # Get fast response from Gemini
+            logger.info(f"Processing question from {user_id}: {user_input}")
+            response = gemini_service.get_response(
+                question=user_input,
+                system_context=system_context,
+                user_profile=user_profile
+            )
+            
+            # Detect emotion from user input (simple text-based analysis)
+            emotion_analysis = emotion_service.analyze_text(user_input)
+            detected_emotion = emotion_analysis.get('primary_emotion', 'neutral')
         
         # Generate natural speech with ElevenLabs
         audio_response = elevenlabs_service.text_to_speech(
@@ -206,7 +249,6 @@ def ask_question():
             )
         
         # Log interaction to Snowflake for analytics
-        import uuid
         session_id = request.headers.get('X-Session-ID', str(uuid.uuid4()))
         interaction_id = str(uuid.uuid4())
         
@@ -283,6 +325,85 @@ def serve_audio(filename):
     except Exception as e:
         logger.error(f"Error serving audio: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/memory/recent/<user_id>', methods=['GET'])
+def get_recent_conversations(user_id):
+    """
+    Get recent conversation history for a user from Snowflake Memory
+    
+    Query params:
+    - limit: Number of recent conversations to return (default: 5)
+    
+    Response:
+    {
+        "success": true,
+        "user_id": "voice_assistant_user",
+        "conversations": [
+            {
+                "question": "What is gravity?",
+                "answer": "Gravity is...",
+                "topic": "physics",
+                "emotion": "curious",
+                "timestamp": "2025-11-09T10:30:00Z"
+            }
+        ],
+        "count": 5
+    }
+    """
+    try:
+        limit = int(request.args.get('limit', 5))
+        
+        if not memory_service or not memory_service.is_available():
+            return jsonify({
+                'success': False,
+                'error': 'Memory service not available'
+            }), 503
+        
+        # Query Snowflake for recent conversations
+        cursor = memory_service.conn.cursor()
+        cursor.execute("""
+            SELECT 
+                question_text,
+                answer_text,
+                topic,
+                emotion,
+                lesson_tag,
+                timestamp
+            FROM user_embeddings
+            WHERE user_id = %s
+            ORDER BY timestamp DESC
+            LIMIT %s
+        """, (user_id, limit))
+        
+        conversations = []
+        for row in cursor.fetchall():
+            conversations.append({
+                'question': row[0],
+                'answer': row[1],
+                'topic': row[2],
+                'emotion': row[3],
+                'lesson_tag': row[4],
+                'timestamp': row[5].isoformat() if row[5] else None
+            })
+        
+        cursor.close()
+        
+        return jsonify({
+            'success': True,
+            'user_id': user_id,
+            'conversations': conversations,
+            'count': len(conversations),
+            'last_topic': conversations[0]['topic'] if conversations else None,
+            'last_question': conversations[0]['question'] if conversations else None
+        })
+        
+    except Exception as e:
+        logger.error(f"Error retrieving conversation history: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @app.route('/api/plan', methods=['POST'])
@@ -1425,14 +1546,26 @@ def _detect_learning_style(sessions: List[Dict]) -> str:
 def build_personalized_context(user_profile, additional_context, memory_context=""):
     """Build personalized context for AI responses using user data, analytics, and memory"""
     context = {
-        'role': 'You are HoloMentor, an AI holographic learning companion. You are patient, encouraging, and adaptive.',
-        'personality': 'friendly, supportive, and educational'
+        'role': 'You are Harry Potter, a magical guide and friend. You are patient, encouraging, and make learning fun with a touch of magic.',
+        'personality': 'friendly, magical, and enthusiastic about teaching',
+        'instruction': 'Keep responses very brief and conversational for voice interactions - 2-3 sentences maximum. Be warm and engaging but concise.'
     }
     
     # Add memory context if available (RAG from Snowflake)
     if memory_context:
         context['previous_interactions'] = memory_context
         context['instruction'] = 'Use the previous interactions to personalize your response. Reference past conversations when relevant.'
+    
+    # Default demo profile for voice assistant
+    if not user_profile:
+        user_profile = {
+            'name': 'Tommy',
+            'age': 10,
+            'learning_goals': ['science', 'math', 'space exploration'],
+            'preferences': {
+                'difficulty_level': 'intermediate'
+            }
+        }
     
     if user_profile:
         context['student_name'] = user_profile.get('name')
@@ -1462,378 +1595,6 @@ def build_personalized_context(user_profile, additional_context, memory_context=
     
     context.update(additional_context)
     return context
-
-
-# ===== HeyGen Realtime Avatar Endpoints =====
-
-@app.route('/api/heygen/session/create', methods=['POST'])
-def create_heygen_session():
-    """
-    Create a HeyGen realtime avatar session
-    
-    Request:
-    {
-        "avatar_id": "optional_avatar_id",
-        "voice_id": "optional_voice_id",
-        "user_id": "user_id"
-    }
-    
-    Response:
-    {
-        "success": true,
-        "session": {
-            "session_id": "...",
-            "websocket_url": "wss://...",
-            "avatar_id": "..."
-        }
-    }
-    """
-    try:
-        data = request.get_json() or {}
-        user_id = data.get('user_id', request.headers.get('X-User-ID', 'anonymous'))
-        
-        # Get user preferences for avatar/voice
-        user_profile = None
-        if user_id != 'anonymous' and firebase_service.is_available():
-            user_profile = firebase_service.get_user(user_id)
-        
-        # Use user preferences or defaults
-        avatar_id = data.get('avatar_id') or (user_profile.get('preferences', {}).get('avatar_id') if user_profile else None) or 'default'
-        voice_id = data.get('voice_id') or (user_profile.get('preferences', {}).get('voice_id') if user_profile else None)
-        
-        # Log request details
-        logger.info(f"=== Creating HeyGen session request ===")
-        logger.info(f"Avatar ID: {avatar_id}")
-        logger.info(f"Voice ID: {voice_id}")
-        logger.info(f"User ID: {user_id}")
-        
-        # Create HeyGen session
-        session_data = heygen_service.create_realtime_session(
-            avatar_id=avatar_id,
-            voice_id=voice_id
-        )
-        
-        logger.info(f"=== Session created successfully ===")
-        logger.info(f"Session data keys: {list(session_data.keys())}")
-        logger.info(f"SDP offer present: {'sdp' in session_data}")
-        logger.info(f"Realtime endpoint present: {'realtime_endpoint' in session_data}")
-        logger.info(f"ICE servers present: {'ice_servers' in session_data}")
-        
-        # Log avatar interaction
-        if firebase_service.is_available():
-            try:
-                firebase_service.log_avatar_interaction(
-                    user_id=user_id,
-                    state='session_created',
-                    metadata={
-                        'session_id': session_data.get('session_id'),
-                        'avatar_id': avatar_id,
-                        'provider': 'heygen'
-                    }
-                )
-            except Exception as e:
-                logger.warning(f"Could not log avatar interaction: {e}")
-        
-        return jsonify({
-            'success': True,
-            'session': session_data
-        })
-        
-    except Exception as e:
-        logger.error(f"Error creating HeyGen session: {e}")
-        return jsonify({'error': str(e), 'success': False}), 500
-
-
-@app.route('/api/heygen/session/answer', methods=['POST'])
-def answer_heygen_session():
-    """
-    Send WebRTC answer SDP to HeyGen's streaming.sdp endpoint
-    
-    This MUST be called AFTER ICE gathering is complete.
-    
-    Request:
-    {
-        "session_id": "<session_id_from_streaming.new>",
-        "sdp": {
-            "type": "answer",
-            "sdp": "<browser_answer_sdp>"
-        }
-    }
-    
-    Response:
-    {
-        "success": true,
-        "status": "connected",
-        "message": "success"
-    }
-    """
-    try:
-        data = request.get_json() or {}
-        session_id = data.get('session_id')
-        sdp_answer = data.get('sdp')
-        
-        if not session_id:
-            return jsonify({'error': 'session_id is required', 'success': False}), 400
-        
-        if not sdp_answer:
-            return jsonify({'error': 'sdp answer is required', 'success': False}), 400
-        
-        logger.info(f"=== Sending WebRTC answer to /v1/streaming.sdp ===")
-        logger.info(f"Session ID: {session_id}")
-        logger.info(f"SDP type: {sdp_answer.get('type', 'unknown')}")
-        
-        headers = {
-            'Authorization': f'Bearer {os.getenv("HEYGEN_API_KEY")}',
-            'Content-Type': 'application/json'
-        }
-        
-        payload = {
-            'session_id': session_id,
-            'sdp': sdp_answer
-        }
-        
-        # Use the CORRECT endpoint: /v1/streaming.sdp
-        answer_url = "https://api.heygen.com/v1/streaming.sdp"
-        
-        logger.info(f"POST {answer_url}")
-        logger.info(f"Payload keys: {list(payload.keys())}")
-        
-        response = requests.post(answer_url, headers=headers, json=payload, timeout=30)
-        
-        logger.info(f"Answer response status: {response.status_code}")
-        logger.info(f"Response text: {response.text}")
-        
-        if response.status_code != 200:
-            logger.error(f"Failed to send answer: {response.status_code}")
-            logger.error(f"Response text: {response.text}")
-            response.raise_for_status()
-        
-        result = response.json()
-        logger.info(f"=== Answer response ===")
-        logger.info(f"{result}")
-        
-        # Check for success message
-        if result.get('message') == 'success' or response.status_code == 200:
-            logger.info("✅ SDP answer sent successfully!")
-            return jsonify({
-                'success': True,
-                'status': 'connected',
-                'message': result.get('message', 'success'),
-                'response': result
-            })
-        else:
-            logger.warning(f"Unexpected response: {result}")
-            return jsonify({
-                'success': True,
-                'status': 'sent',
-                'response': result
-            })
-        
-    except Exception as e:
-        logger.error(f"Error sending WebRTC answer: {e}")
-        return jsonify({'error': str(e), 'success': False}), 500
-
-
-@app.route('/api/heygen/session/close', methods=['POST'])
-def close_heygen_session():
-    """
-    Close/terminate a HeyGen streaming session
-    
-    Request:
-    {
-        "session_id": "..."
-    }
-    
-    Response:
-    {
-        "success": true,
-        "closed": true
-    }
-    """
-    try:
-        data = request.get_json() or {}
-        session_id = data.get('session_id')
-        
-        if not session_id:
-            return jsonify({'error': 'session_id is required', 'success': False}), 400
-        
-        logger.info(f"=== Closing HeyGen session ===")
-        logger.info(f"Session ID: {session_id}")
-        
-        closed = heygen_service.close_session(session_id)
-        
-        return jsonify({
-            'success': True,
-            'closed': closed
-        })
-        
-    except Exception as e:
-        logger.error(f"Error closing HeyGen session: {e}")
-        return jsonify({'error': str(e), 'success': False}), 500
-
-
-@app.route('/api/heygen/avatars', methods=['GET'])
-def get_heygen_avatars():
-    """
-    Get list of available HeyGen avatars
-    
-    Query params:
-    - interactive_only: if true, return only interactive avatars (for streaming API)
-    
-    Response:
-    {
-        "success": true,
-        "avatars": [...]
-    }
-    """
-    try:
-        interactive_only = request.args.get('interactive_only', 'false').lower() == 'true'
-        avatars = heygen_service.get_avatar_list(interactive_only=interactive_only)
-        return jsonify({
-            'success': True,
-            'avatars': avatars,
-            'interactive_only': interactive_only,
-            'count': len(avatars)
-        })
-    except Exception as e:
-        logger.error(f"Error fetching avatars: {e}")
-        return jsonify({'error': str(e), 'success': False}), 500
-
-
-@app.route('/api/heygen/avatars/interactive', methods=['GET'])
-def get_interactive_avatars():
-    """
-    Get list of interactive HeyGen avatars (required for streaming API)
-    
-    Response:
-    {
-        "success": true,
-        "avatars": [...],
-        "count": 10
-    }
-    """
-    try:
-        avatars = heygen_service.get_interactive_avatars()
-        return jsonify({
-            'success': True,
-            'avatars': avatars,
-            'count': len(avatars)
-        })
-    except Exception as e:
-        logger.error(f"Error fetching interactive avatars: {e}")
-        return jsonify({'error': str(e), 'success': False}), 500
-
-
-@app.route('/api/heygen/avatar/check/<avatar_id>', methods=['GET'])
-def check_heygen_avatar(avatar_id):
-    """
-    Check if a specific avatar exists and get its details
-    
-    Response:
-    {
-        "success": true,
-        "avatar": {...},
-        "exists": true/false
-    }
-    """
-    try:
-        avatar_info = heygen_service.check_avatar_exists(avatar_id)
-        return jsonify({
-            'success': True,
-            'exists': True,
-            'avatar': avatar_info
-        })
-    except Exception as e:
-        logger.error(f"Error checking avatar: {e}")
-        return jsonify({
-            'success': False,
-            'exists': False,
-            'error': str(e)
-        }), 404
-
-
-@app.route('/api/heygen/voices', methods=['GET'])
-def get_heygen_voices():
-    """
-    Get list of available HeyGen voices
-    
-    Response:
-    {
-        "success": true,
-        "voices": [...]
-    }
-    """
-    try:
-        voices = heygen_service.get_voice_list()
-        return jsonify({
-            'success': True,
-            'voices': voices
-        })
-    except Exception as e:
-        logger.error(f"Error fetching voices: {e}")
-        return jsonify({'error': str(e), 'success': False}), 500
-
-
-@app.route('/api/heygen/test', methods=['GET'])
-def test_heygen():
-    """
-    Test HeyGen connection and API key
-    
-    Response:
-    {
-        "available": true/false,
-        "message": "...",
-        "api_key_set": true/false
-    }
-    """
-    try:
-        is_available = heygen_service.is_available()
-        api_key_set = os.getenv('HEYGEN_API_KEY') is not None
-        
-        if not api_key_set:
-            return jsonify({
-                'available': False,
-                'api_key_set': False,
-                'message': 'HEYGEN_API_KEY not set in environment variables'
-            }), 200
-        
-        if not is_available:
-            return jsonify({
-                'available': False,
-                'api_key_set': True,
-                'message': 'HeyGen service not available'
-            }), 200
-        
-        # Try to fetch avatars as a test (use cache to avoid timeout)
-        try:
-            # Use cached data if available to avoid timeout on test endpoint
-            avatars = heygen_service.get_avatar_list(use_cache=True)
-            cache_info = ""
-            if hasattr(heygen_service, '_avatar_cache') and heygen_service._avatar_cache:
-                cache_age = time() - heygen_service._avatar_cache_time if hasattr(heygen_service, '_avatar_cache_time') else 0
-                cache_info = f" (cached, age: {cache_age:.0f}s)" if cache_age > 0 else ""
-            
-            return jsonify({
-                'available': True,
-                'api_key_set': True,
-                'message': f'HeyGen API connected successfully. Found {len(avatars)} avatars.{cache_info}',
-                'avatar_count': len(avatars)
-            }), 200
-        except Exception as api_error:
-            return jsonify({
-                'available': False,
-                'api_key_set': True,
-                'message': f'API key set but connection failed: {str(api_error)}',
-                'error': str(api_error)
-            }), 200
-            
-    except Exception as e:
-        logger.error(f"Error testing HeyGen: {e}")
-        return jsonify({
-            'available': False,
-            'message': f'Test failed: {str(e)}',
-            'error': str(e)
-        }), 500
 
 
 if __name__ == '__main__':

@@ -162,7 +162,7 @@ def main():
         if create_children == 'y':
             num_children = int(input("How many child profiles to create? (default: 2): ") or "2")
             print(f"\nCreating {num_children} child profile(s)...")
-            
+        
             for i in range(num_children):
                 child_id, profile_data = create_child_profile()
                 
@@ -173,7 +173,7 @@ def main():
                         print(f"  ✓ Created child profile: {child_id} ({profile_data['child_name']}, age {profile_data['child_age']})")
                 except Exception as e:
                     print(f"  ✗ Failed to create child profile: {e}")
-    
+            
     # Print summary
     print("\n" + "="*60)
     print("SUMMARY")
