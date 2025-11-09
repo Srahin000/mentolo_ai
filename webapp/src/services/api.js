@@ -1,5 +1,5 @@
 /**
- * API Service for Curiosity Companion Dashboard
+ * API Service for MENTOLO AI Dashboard
  * Handles all backend communication
  */
 

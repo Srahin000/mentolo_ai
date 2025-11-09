@@ -217,7 +217,7 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Curiosity Companion Dashboard</h1>
+        <h1>MENTOLO AI</h1>
         <div className="header-actions">
           <input
             type="text"
@@ -328,7 +328,7 @@ function App() {
       </main>
 
       <footer className="app-footer">
-        <p>Curiosity Companion - AI-Powered Child Development Dashboard</p>
+        <p>MENTOLO AI - AI-Powered Child Development Dashboard</p>
       </footer>
     </div>
   );

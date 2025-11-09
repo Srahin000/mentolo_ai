@@ -653,21 +653,20 @@ def get_coaching_centers():
         for place in top_5_places:
             try:
                 # Generate explanation using Gemini
-                explanation_prompt = f"""Explain why this place would be great for {child_name} (age {child_age}) to visit.
+                explanation_prompt = f"""Write one warm, concise paragraph explaining why this place is perfect for {child_name} (age {child_age}).
 
 Place: {place.get('name')}
 Interest: {place.get('matched_interest', 'general learning')}
 Rating: {place.get('rating', 'N/A')}/5
-Address: {place.get('address', place.get('vicinity', ''))}
 
 Child's interests: {', '.join(interests[:3])}
 
-Write a brief, warm explanation (2-3 sentences) that:
-1. Connects the place to the child's interests
-2. Highlights why it's age-appropriate
-3. Makes it sound exciting and beneficial
+The paragraph should:
+- Connect the place to {child_name}'s specific interests
+- Explain why it's age-appropriate and beneficial
+- Make it sound exciting and worth visiting
 
-Just return the explanation text, no formatting."""
+Write as one flowing paragraph (3-4 sentences max). Just return the text, no formatting or quotes."""
                 
                 response = gemini_service.get_response(
                     question=explanation_prompt,
